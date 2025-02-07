@@ -38,11 +38,15 @@ BEGIN
     RETURN v_stmt;
 END;
 
-CREATE OR REPLACE PROCEDURE Insert_MyTable(p_id NUMBER, p_val NUMBER) IS
+CREATE OR REPLACE PROCEDURE Insert_MyTable(p_val NUMBER) IS
+    v_new_id NUMBER;
 BEGIN
-    INSERT INTO MyTable (id, val) VALUES (p_id, p_val);
+    SELECT NVL(MAX(id), 0) + 1 INTO v_new_id FROM MyTable;
+    INSERT INTO MyTable (id, val) VALUES (v_new_id, p_val);
     COMMIT;
 END;
+/
+
 
 CREATE OR REPLACE PROCEDURE Update_MyTable(p_id NUMBER, p_val NUMBER) IS
 BEGIN
