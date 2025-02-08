@@ -32,11 +32,30 @@ CREATE OR REPLACE FUNCTION Generate_Insert_Statement(p_id NUMBER)
 RETURN VARCHAR2 IS
     v_val NUMBER;
     v_stmt VARCHAR2(500);
+    v_max_id NUMBER;
 BEGIN
-    SELECT val INTO v_val FROM MyTable WHERE id = p_id;
-    v_stmt := 'INSERT INTO MyTable (id, val) VALUES (' || p_id || ', ' || v_val || ');';
+    IF p_id < 0 THEN
+        RETURN 'Ошибка: id не может быть отрицательным';
+    END IF;
+
+    BEGIN
+        SELECT val INTO v_val
+        FROM MyTable
+        WHERE id = p_id;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RETURN 'Ошибка: Запись с id = ' || p_id || ' не найдена';
+        WHEN OTHERS THEN
+            RETURN 'Ошибка: Произошла ошибка при запросе данных для id = ' || p_id;
+    END;
+
+    SELECT MAX(id) + 1 INTO v_max_id FROM MyTable;
+
+    v_stmt := 'INSERT INTO MyTable (id, val) VALUES (' || v_max_id || ', ' || v_val || ');';
+
     RETURN v_stmt;
 END;
+
 
 CREATE OR REPLACE PROCEDURE Insert_MyTable(p_val NUMBER) IS
     v_new_id NUMBER;
@@ -49,15 +68,29 @@ END;
 
 
 CREATE OR REPLACE PROCEDURE Update_MyTable(p_id NUMBER, p_val NUMBER) IS
+    v_count NUMBER;
 BEGIN
-    UPDATE MyTable SET val = p_val WHERE id = p_id;
-    COMMIT;
+    SELECT COUNT(*) INTO v_count FROM MyTable WHERE id = p_id;
+
+    IF v_count > 0 THEN
+        UPDATE MyTable SET val = p_val WHERE id = p_id;
+        COMMIT;
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('Нет записей с id - ' || p_id);
+    END IF;
 END;
 
 CREATE OR REPLACE PROCEDURE Delete_MyTable(p_id NUMBER) IS
+    v_count NUMBER;
 BEGIN
-    DELETE FROM MyTable WHERE id = p_id;
-    COMMIT;
+    SELECT COUNT(*) INTO v_count FROM MyTable WHERE id = p_id;
+
+    IF v_count > 0 THEN
+        DELETE FROM MyTable WHERE id = p_id;
+        COMMIT;
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('Нет записи с id - ' || p_id);
+    END IF;
 END;
 
 CREATE OR REPLACE FUNCTION Calculate_Annual_Reward(monthly_salary NUMBER, annual_bonus_percent NUMBER)
@@ -65,7 +98,7 @@ RETURN NUMBER IS
     v_bonus_rate NUMBER;
 BEGIN
     IF monthly_salary < 0 OR annual_bonus_percent < 0 THEN
-        RAISE_APPLICATION_ERROR(-20001, 'Значения не могут быть отрицательными');
+        DBMS_OUTPUT.PUT_LINE('Значения не могут быть отрицательными');
     END IF;
     
     v_bonus_rate := annual_bonus_percent / 100;
