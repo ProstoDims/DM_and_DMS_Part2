@@ -11,7 +11,10 @@ CREATE OR REPLACE PROCEDURE compare_schemes(
     prod_schema_name IN VARCHAR2
 ) IS
     TYPE table_list IS TABLE OF VARCHAR2(30);
+    TYPE ddl_list IS TABLE OF VARCHAR2(4000);
+    
     v_tables table_list;
+    v_ddl_commands ddl_list := ddl_list();
     v_has_differences BOOLEAN := FALSE;
     v_table_differences BOOLEAN := FALSE;
     v_any_differences BOOLEAN := FALSE;
@@ -34,6 +37,8 @@ BEGIN
         DBMS_OUTPUT.PUT_LINE('Таблицы, которые есть в DEV_SCHEMA, но отсутствуют в PROD_SCHEMA:');
         FOR i IN 1 .. v_tables.COUNT LOOP
             DBMS_OUTPUT.PUT_LINE('  - ' || v_tables(i));
+            v_ddl_commands.EXTEND;
+            v_ddl_commands(v_ddl_commands.COUNT) := 'CREATE TABLE ' || prod_schema_name || '.' || v_tables(i) || ' AS SELECT * FROM ' || dev_schema_name || '.' || v_tables(i) || ' WHERE 1 = 0;';
         END LOOP;
         v_table_differences := TRUE;
     ELSE
@@ -53,6 +58,8 @@ BEGIN
         DBMS_OUTPUT.PUT_LINE('Таблицы, которые есть в PROD_SCHEMA, но отсутствуют в DEV_SCHEMA:');
         FOR i IN 1 .. v_tables.COUNT LOOP
             DBMS_OUTPUT.PUT_LINE('  - ' || v_tables(i));
+            v_ddl_commands.EXTEND;
+            v_ddl_commands(v_ddl_commands.COUNT) := 'DROP TABLE ' || prod_schema_name || '.' || v_tables(i) || ';';
         END LOOP;
         v_table_differences := TRUE;
     ELSE
@@ -79,12 +86,12 @@ BEGIN
             v_has_differences := FALSE;
 
             FOR r_column IN (
-                SELECT column_name 
+                SELECT column_name, data_type, data_length
                 FROM ALL_TAB_COLUMNS
                 WHERE OWNER = dev_schema_name 
                   AND table_name = r_table.TABLE_NAME
                 MINUS
-                SELECT column_name 
+                SELECT column_name, data_type, data_length
                 FROM ALL_TAB_COLUMNS
                 WHERE OWNER = prod_schema_name 
                   AND table_name = r_table.TABLE_NAME
@@ -96,15 +103,17 @@ BEGIN
                 END IF;
 
                 DBMS_OUTPUT.PUT_LINE('  - Столбец ' || r_column.column_name || ' есть в DEV_SCHEMA но отсутствует в PROD_SCHEMA.');
+                v_ddl_commands.EXTEND;
+                v_ddl_commands(v_ddl_commands.COUNT) := 'ALTER TABLE ' || prod_schema_name || '.' || r_table.TABLE_NAME || ' ADD ' || r_column.column_name || ' ' || r_column.data_type || '(' || r_column.data_length || ');';
             END LOOP;
 
             FOR r_column IN (
-                SELECT column_name 
+                SELECT column_name
                 FROM ALL_TAB_COLUMNS
                 WHERE OWNER = prod_schema_name 
                   AND table_name = r_table.TABLE_NAME
                 MINUS
-                SELECT column_name 
+                SELECT column_name
                 FROM ALL_TAB_COLUMNS
                 WHERE OWNER = dev_schema_name 
                   AND table_name = r_table.TABLE_NAME
@@ -116,6 +125,8 @@ BEGIN
                 END IF;
 
                 DBMS_OUTPUT.PUT_LINE('  - Столбец ' || r_column.column_name || ' есть в PROD_SCHEMA но отсутствует в DEV_SCHEMA.');
+                v_ddl_commands.EXTEND;
+                v_ddl_commands(v_ddl_commands.COUNT) := 'ALTER TABLE ' || prod_schema_name || '.' || r_table.TABLE_NAME || ' DROP COLUMN ' || r_column.column_name || ';';
             END LOOP;
 
             FOR r_column IN (
@@ -138,6 +149,8 @@ BEGIN
                 END IF;
 
                 DBMS_OUTPUT.PUT_LINE('  - Столбец ' || r_column.column_name || ' отличается.');
+                v_ddl_commands.EXTEND;
+                v_ddl_commands(v_ddl_commands.COUNT) := 'ALTER TABLE ' || prod_schema_name || '.' || r_table.TABLE_NAME || ' MODIFY ' || r_column.column_name || ' ' || r_column.data_type || '(' || r_column.data_length || ');';
             END LOOP;
         END;
     END LOOP;
@@ -154,41 +167,56 @@ BEGIN
 
     DECLARE
         v_has_proc_func_differences BOOLEAN := FALSE;
+        v_object_ddl CLOB;
     BEGIN
         FOR r_object IN (
             SELECT OBJECT_NAME, OBJECT_TYPE
             FROM ALL_OBJECTS
             WHERE OWNER = dev_schema_name
-              AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION')
-              AND OBJECT_NAME NOT IN (
-                  SELECT OBJECT_NAME
-                  FROM ALL_OBJECTS
-                  WHERE OWNER = prod_schema_name
+            AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION')
+            AND OBJECT_NAME NOT IN (
+                SELECT OBJECT_NAME
+                FROM ALL_OBJECTS
+                WHERE OWNER = prod_schema_name
                     AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION')
-              )
+            )
         ) LOOP
             IF NOT v_has_proc_func_differences THEN
                 v_has_proc_func_differences := TRUE;
             END IF;
             DBMS_OUTPUT.PUT_LINE('Объект ' || r_object.OBJECT_TYPE || ' ' || r_object.OBJECT_NAME || ' есть в DEV_SCHEMA, но отсутствует в PROD_SCHEMA.');
+
+            BEGIN
+                SELECT DBMS_METADATA.GET_DDL(r_object.OBJECT_TYPE, r_object.OBJECT_NAME, dev_schema_name)
+                INTO v_object_ddl
+                FROM DUAL;
+            EXCEPTION
+                WHEN OTHERS THEN
+                    v_object_ddl := '-- Не удалось извлечь DDL для объекта ' || r_object.OBJECT_NAME;
+            END;
+
+            v_ddl_commands.EXTEND;
+            v_ddl_commands(v_ddl_commands.COUNT) := v_object_ddl;
         END LOOP;
 
         FOR r_object IN (
             SELECT OBJECT_NAME, OBJECT_TYPE
             FROM ALL_OBJECTS
             WHERE OWNER = prod_schema_name
-              AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION')
-              AND OBJECT_NAME NOT IN (
-                  SELECT OBJECT_NAME
-                  FROM ALL_OBJECTS
-                  WHERE OWNER = dev_schema_name
+            AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION')
+            AND OBJECT_NAME NOT IN (
+                SELECT OBJECT_NAME
+                FROM ALL_OBJECTS
+                WHERE OWNER = dev_schema_name
                     AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION')
-              )
+            )
         ) LOOP
             IF NOT v_has_proc_func_differences THEN
                 v_has_proc_func_differences := TRUE;
             END IF;
             DBMS_OUTPUT.PUT_LINE('Объект ' || r_object.OBJECT_TYPE || ' ' || r_object.OBJECT_NAME || ' есть в PROD_SCHEMA, но отсутствует в DEV_SCHEMA.');
+            v_ddl_commands.EXTEND;
+            v_ddl_commands(v_ddl_commands.COUNT) := 'DROP ' || r_object.OBJECT_TYPE || ' ' || prod_schema_name || '.' || r_object.OBJECT_NAME || ';';
         END LOOP;
 
         IF NOT v_has_proc_func_differences THEN
@@ -206,35 +234,53 @@ BEGIN
         v_has_index_differences BOOLEAN := FALSE;
     BEGIN
         FOR r_index IN (
-            SELECT INDEX_NAME
-            FROM ALL_INDEXES
-            WHERE OWNER = dev_schema_name
-              AND INDEX_NAME NOT IN (
-                  SELECT INDEX_NAME
-                  FROM ALL_INDEXES
-                  WHERE OWNER = prod_schema_name
-              )
+            SELECT i.INDEX_NAME, i.TABLE_NAME, LISTAGG(c.COLUMN_NAME, ', ') WITHIN GROUP (ORDER BY c.COLUMN_POSITION) AS COLUMN_LIST
+            FROM ALL_INDEXES i
+            JOIN ALL_IND_COLUMNS c ON i.INDEX_NAME = c.INDEX_NAME AND i.TABLE_NAME = c.TABLE_NAME AND i.OWNER = c.INDEX_OWNER
+            WHERE i.OWNER = dev_schema_name
+            AND i.TABLE_NAME IN (
+                SELECT TABLE_NAME
+                FROM ALL_TABLES
+                WHERE OWNER = prod_schema_name
+            )
+            AND i.INDEX_NAME NOT IN (
+                SELECT INDEX_NAME
+                FROM ALL_INDEXES
+                WHERE OWNER = prod_schema_name
+            )
+            GROUP BY i.INDEX_NAME, i.TABLE_NAME
         ) LOOP
             IF NOT v_has_index_differences THEN
                 v_has_index_differences := TRUE;
             END IF;
             DBMS_OUTPUT.PUT_LINE('Индекс ' || r_index.INDEX_NAME || ' есть в DEV_SCHEMA, но отсутствует в PROD_SCHEMA.');
+            v_ddl_commands.EXTEND;
+            v_ddl_commands(v_ddl_commands.COUNT) := 'CREATE INDEX ' || prod_schema_name || '.' || r_index.INDEX_NAME || ' ON ' || prod_schema_name || '.' || r_index.TABLE_NAME || '(' || r_index.COLUMN_LIST || ');';
         END LOOP;
 
         FOR r_index IN (
-            SELECT INDEX_NAME
-            FROM ALL_INDEXES
-            WHERE OWNER = prod_schema_name
-              AND INDEX_NAME NOT IN (
-                  SELECT INDEX_NAME
-                  FROM ALL_INDEXES
-                  WHERE OWNER = dev_schema_name
-              )
+            SELECT i.INDEX_NAME, i.TABLE_NAME, LISTAGG(c.COLUMN_NAME, ', ') WITHIN GROUP (ORDER BY c.COLUMN_POSITION) AS COLUMN_LIST
+            FROM ALL_INDEXES i
+            JOIN ALL_IND_COLUMNS c ON i.INDEX_NAME = c.INDEX_NAME AND i.TABLE_NAME = c.TABLE_NAME AND i.OWNER = c.INDEX_OWNER
+            WHERE i.OWNER = prod_schema_name
+            AND i.TABLE_NAME IN (
+                SELECT TABLE_NAME
+                FROM ALL_TABLES
+                WHERE OWNER = dev_schema_name
+            )
+            AND i.INDEX_NAME NOT IN (
+                SELECT INDEX_NAME
+                FROM ALL_INDEXES
+                WHERE OWNER = dev_schema_name
+            )
+            GROUP BY i.INDEX_NAME, i.TABLE_NAME
         ) LOOP
             IF NOT v_has_index_differences THEN
                 v_has_index_differences := TRUE;
             END IF;
             DBMS_OUTPUT.PUT_LINE('Индекс ' || r_index.INDEX_NAME || ' есть в PROD_SCHEMA, но отсутствует в DEV_SCHEMA.');
+            v_ddl_commands.EXTEND;
+            v_ddl_commands(v_ddl_commands.COUNT) := 'DROP INDEX ' || prod_schema_name || '.' || r_index.INDEX_NAME || ';';
         END LOOP;
 
         IF NOT v_has_index_differences THEN
@@ -267,6 +313,8 @@ BEGIN
                 v_has_package_differences := TRUE;
             END IF;
             DBMS_OUTPUT.PUT_LINE('Пакет ' || r_package.OBJECT_NAME || ' есть в DEV_SCHEMA, но отсутствует в PROD_SCHEMA.');
+            v_ddl_commands.EXTEND;
+            v_ddl_commands(v_ddl_commands.COUNT) := 'CREATE OR REPLACE PACKAGE ' || prod_schema_name || '.' || r_package.OBJECT_NAME || ' AS <код_пакета>;';
         END LOOP;
 
         FOR r_package IN (
@@ -285,6 +333,8 @@ BEGIN
                 v_has_package_differences := TRUE;
             END IF;
             DBMS_OUTPUT.PUT_LINE('Пакет ' || r_package.OBJECT_NAME || ' есть в PROD_SCHEMA, но отсутствует в DEV_SCHEMA.');
+            v_ddl_commands.EXTEND;
+            v_ddl_commands(v_ddl_commands.COUNT) := 'DROP PACKAGE ' || prod_schema_name || '.' || r_package.OBJECT_NAME || ';';
         END LOOP;
 
         IF NOT v_has_package_differences THEN
@@ -433,6 +483,18 @@ BEGIN
     END;
 
     DBMS_OUTPUT.PUT_LINE('--------------------> ПОРЯДОК СОЗДАНИЯ ТАБЛИЦ <--------------------');
+
+    DBMS_OUTPUT.PUT_LINE('');
+
+    DBMS_OUTPUT.PUT_LINE('--------------------> DDL-СКРИПТ ДЛЯ ОБНОВЛЕНИЯ <--------------------');
+    IF v_ddl_commands.COUNT > 0 THEN
+        FOR i IN 1 .. v_ddl_commands.COUNT LOOP
+            DBMS_OUTPUT.PUT_LINE(v_ddl_commands(i));
+        END LOOP;
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('DDL-скрипт не требуется: отличий между схемами не обнаружено.');
+    END IF;
+    DBMS_OUTPUT.PUT_LINE('--------------------> DDL-СКРИПТ ДЛЯ ОБНОВЛЕНИЯ <--------------------');
 
     DBMS_OUTPUT.PUT_LINE('');
 END;
