@@ -22,7 +22,13 @@ BEGIN
     DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ТАБЛИЦ <--------------------');
 
     SELECT TABLE_NAME BULK COLLECT INTO v_tables 
-    FROM ALL_TABLES WHERE OWNER = dev_schema_name AND TABLE_NAME NOT IN (SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER = prod_schema_name);
+    FROM ALL_TABLES 
+    WHERE OWNER = dev_schema_name
+      AND TABLE_NAME NOT IN (
+          SELECT TABLE_NAME 
+          FROM ALL_TABLES 
+          WHERE OWNER = prod_schema_name
+      );
 
     IF v_tables.COUNT > 0 THEN
         DBMS_OUTPUT.PUT_LINE('Таблицы, которые есть в DEV_SCHEMA, но отсутствуют в PROD_SCHEMA:');
@@ -35,7 +41,13 @@ BEGIN
     END IF;
 
     SELECT TABLE_NAME BULK COLLECT INTO v_tables 
-    FROM ALL_TABLES WHERE OWNER = prod_schema_name AND TABLE_NAME NOT IN (SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER = dev_schema_name);
+    FROM ALL_TABLES 
+    WHERE OWNER = prod_schema_name
+      AND TABLE_NAME NOT IN (
+          SELECT TABLE_NAME 
+          FROM ALL_TABLES 
+          WHERE OWNER = dev_schema_name
+      );
 
     IF v_tables.COUNT > 0 THEN
         DBMS_OUTPUT.PUT_LINE('Таблицы, которые есть в PROD_SCHEMA, но отсутствуют в DEV_SCHEMA:');
@@ -135,6 +147,152 @@ BEGIN
     END IF;
 
     DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ СТРУКТУР ТАБЛИЦ <--------------------');
+
+    DBMS_OUTPUT.PUT_LINE('');
+
+    DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ПРОЦЕДУР И ФУНКЦИЙ <--------------------');
+
+    DECLARE
+        v_has_proc_func_differences BOOLEAN := FALSE;
+    BEGIN
+        FOR r_object IN (
+            SELECT OBJECT_NAME, OBJECT_TYPE
+            FROM ALL_OBJECTS
+            WHERE OWNER = dev_schema_name
+              AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION')
+              AND OBJECT_NAME NOT IN (
+                  SELECT OBJECT_NAME
+                  FROM ALL_OBJECTS
+                  WHERE OWNER = prod_schema_name
+                    AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION')
+              )
+        ) LOOP
+            IF NOT v_has_proc_func_differences THEN
+                v_has_proc_func_differences := TRUE;
+            END IF;
+            DBMS_OUTPUT.PUT_LINE('Объект ' || r_object.OBJECT_TYPE || ' ' || r_object.OBJECT_NAME || ' есть в DEV_SCHEMA, но отсутствует в PROD_SCHEMA.');
+        END LOOP;
+
+        FOR r_object IN (
+            SELECT OBJECT_NAME, OBJECT_TYPE
+            FROM ALL_OBJECTS
+            WHERE OWNER = prod_schema_name
+              AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION')
+              AND OBJECT_NAME NOT IN (
+                  SELECT OBJECT_NAME
+                  FROM ALL_OBJECTS
+                  WHERE OWNER = dev_schema_name
+                    AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION')
+              )
+        ) LOOP
+            IF NOT v_has_proc_func_differences THEN
+                v_has_proc_func_differences := TRUE;
+            END IF;
+            DBMS_OUTPUT.PUT_LINE('Объект ' || r_object.OBJECT_TYPE || ' ' || r_object.OBJECT_NAME || ' есть в PROD_SCHEMA, но отсутствует в DEV_SCHEMA.');
+        END LOOP;
+
+        IF NOT v_has_proc_func_differences THEN
+            DBMS_OUTPUT.PUT_LINE('Отличий в процедурах и функциях между DEV_SCHEMA и PROD_SCHEMA не обнаружено.');
+        END IF;
+    END;
+
+    DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ПРОЦЕДУР И ФУНКЦИЙ <--------------------');
+
+    DBMS_OUTPUT.PUT_LINE('');
+
+    DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ИНДЕКСОВ <--------------------');
+
+    DECLARE
+        v_has_index_differences BOOLEAN := FALSE;
+    BEGIN
+        FOR r_index IN (
+            SELECT INDEX_NAME
+            FROM ALL_INDEXES
+            WHERE OWNER = dev_schema_name
+              AND INDEX_NAME NOT IN (
+                  SELECT INDEX_NAME
+                  FROM ALL_INDEXES
+                  WHERE OWNER = prod_schema_name
+              )
+        ) LOOP
+            IF NOT v_has_index_differences THEN
+                v_has_index_differences := TRUE;
+            END IF;
+            DBMS_OUTPUT.PUT_LINE('Индекс ' || r_index.INDEX_NAME || ' есть в DEV_SCHEMA, но отсутствует в PROD_SCHEMA.');
+        END LOOP;
+
+        FOR r_index IN (
+            SELECT INDEX_NAME
+            FROM ALL_INDEXES
+            WHERE OWNER = prod_schema_name
+              AND INDEX_NAME NOT IN (
+                  SELECT INDEX_NAME
+                  FROM ALL_INDEXES
+                  WHERE OWNER = dev_schema_name
+              )
+        ) LOOP
+            IF NOT v_has_index_differences THEN
+                v_has_index_differences := TRUE;
+            END IF;
+            DBMS_OUTPUT.PUT_LINE('Индекс ' || r_index.INDEX_NAME || ' есть в PROD_SCHEMA, но отсутствует в DEV_SCHEMA.');
+        END LOOP;
+
+        IF NOT v_has_index_differences THEN
+            DBMS_OUTPUT.PUT_LINE('Отличий в индексах между DEV_SCHEMA и PROD_SCHEMA не обнаружено.');
+        END IF;
+    END;
+
+    DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ИНДЕКСОВ <--------------------');
+
+    DBMS_OUTPUT.PUT_LINE('');
+
+    DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ПАКЕТОВ <--------------------');
+
+    DECLARE
+        v_has_package_differences BOOLEAN := FALSE;
+    BEGIN
+        FOR r_package IN (
+            SELECT OBJECT_NAME
+            FROM ALL_OBJECTS
+            WHERE OWNER = dev_schema_name
+              AND OBJECT_TYPE = 'PACKAGE'
+              AND OBJECT_NAME NOT IN (
+                  SELECT OBJECT_NAME
+                  FROM ALL_OBJECTS
+                  WHERE OWNER = prod_schema_name
+                    AND OBJECT_TYPE = 'PACKAGE'
+              )
+        ) LOOP
+            IF NOT v_has_package_differences THEN
+                v_has_package_differences := TRUE;
+            END IF;
+            DBMS_OUTPUT.PUT_LINE('Пакет ' || r_package.OBJECT_NAME || ' есть в DEV_SCHEMA, но отсутствует в PROD_SCHEMA.');
+        END LOOP;
+
+        FOR r_package IN (
+            SELECT OBJECT_NAME
+            FROM ALL_OBJECTS
+            WHERE OWNER = prod_schema_name
+              AND OBJECT_TYPE = 'PACKAGE'
+              AND OBJECT_NAME NOT IN (
+                  SELECT OBJECT_NAME
+                  FROM ALL_OBJECTS
+                  WHERE OWNER = dev_schema_name
+                    AND OBJECT_TYPE = 'PACKAGE'
+              )
+        ) LOOP
+            IF NOT v_has_package_differences THEN
+                v_has_package_differences := TRUE;
+            END IF;
+            DBMS_OUTPUT.PUT_LINE('Пакет ' || r_package.OBJECT_NAME || ' есть в PROD_SCHEMA, но отсутствует в DEV_SCHEMA.');
+        END LOOP;
+
+        IF NOT v_has_package_differences THEN
+            DBMS_OUTPUT.PUT_LINE('Отличий в пакетах между DEV_SCHEMA и PROD_SCHEMA не обнаружено.');
+        END IF;
+    END;
+
+    DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ПАКЕТОВ <--------------------');
 
     DBMS_OUTPUT.PUT_LINE('');
 
