@@ -1,3 +1,14 @@
+CREATE USER admin_schema IDENTIFIED BY admin_password;
+GRANT CONNECT, RESOURCE TO admin_schema;
+GRANT SELECT ANY DICTIONARY TO admin_schema;
+GRANT ALL PRIVILEGES TO ADMIN_SCHEMA;
+SET SERVEROUTPUT ON;
+
+
+ALTER SESSION SET CURRENT_SCHEMA = admin_schema;
+
+
+
 CREATE USER dev_schema IDENTIFIED BY dev_password;
 CREATE USER prod_schema IDENTIFIED BY prod_password;
 GRANT CONNECT, RESOURCE TO dev_schema, prod_schema;
@@ -18,6 +29,12 @@ CREATE TABLE common_table (
     name VARCHAR2(100),
     age NUMBER
 );
+
+CREATE OR REPLACE PROCEDURE hello_world IS 
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('Привет, мир!');
+END hello_world;
+
 
 ALTER SESSION SET CURRENT_SCHEMA = prod_schema;
 

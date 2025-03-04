@@ -1,10 +1,3 @@
-CREATE USER admin_schema IDENTIFIED BY admin_password;
-GRANT CONNECT, RESOURCE TO admin_schema;
-GRANT SELECT ANY DICTIONARY TO admin_schema;
-GRANT ALL PRIVILEGES TO ADMIN_SCHEMA;
-
-
-ALTER SESSION SET CURRENT_SCHEMA = admin_schema;
 
 CREATE OR REPLACE PROCEDURE compare_schemes(
     dev_schema_name IN VARCHAR2,
@@ -23,49 +16,7 @@ BEGIN
     DBMS_OUTPUT.PUT_LINE('');
 
     DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ТАБЛИЦ <--------------------');
-
-    SELECT TABLE_NAME BULK COLLECT INTO v_tables 
-    FROM ALL_TABLES 
-    WHERE OWNER = dev_schema_name
-      AND TABLE_NAME NOT IN (
-          SELECT TABLE_NAME 
-          FROM ALL_TABLES 
-          WHERE OWNER = prod_schema_name
-      );
-
-    IF v_tables.COUNT > 0 THEN
-        DBMS_OUTPUT.PUT_LINE('Таблицы, которые есть в DEV_SCHEMA, но отсутствуют в PROD_SCHEMA:');
-        FOR i IN 1 .. v_tables.COUNT LOOP
-            DBMS_OUTPUT.PUT_LINE('  - ' || v_tables(i));
-            v_ddl_commands.EXTEND;
-            v_ddl_commands(v_ddl_commands.COUNT) := 'CREATE TABLE ' || prod_schema_name || '.' || v_tables(i) || ' AS SELECT * FROM ' || dev_schema_name || '.' || v_tables(i) || ' WHERE 1 = 0;';
-        END LOOP;
-        v_table_differences := TRUE;
-    ELSE
-        DBMS_OUTPUT.PUT_LINE('Все таблицы из DEV_SCHEMA присутствуют в PROD_SCHEMA.');
-    END IF;
-
-    SELECT TABLE_NAME BULK COLLECT INTO v_tables 
-    FROM ALL_TABLES 
-    WHERE OWNER = prod_schema_name
-      AND TABLE_NAME NOT IN (
-          SELECT TABLE_NAME 
-          FROM ALL_TABLES 
-          WHERE OWNER = dev_schema_name
-      );
-
-    IF v_tables.COUNT > 0 THEN
-        DBMS_OUTPUT.PUT_LINE('Таблицы, которые есть в PROD_SCHEMA, но отсутствуют в DEV_SCHEMA:');
-        FOR i IN 1 .. v_tables.COUNT LOOP
-            DBMS_OUTPUT.PUT_LINE('  - ' || v_tables(i));
-            v_ddl_commands.EXTEND;
-            v_ddl_commands(v_ddl_commands.COUNT) := 'DROP TABLE ' || prod_schema_name || '.' || v_tables(i) || ';';
-        END LOOP;
-        v_table_differences := TRUE;
-    ELSE
-        DBMS_OUTPUT.PUT_LINE('Все таблицы из PROD_SCHEMA присутствуют в DEV_SCHEMA.');
-    END IF;
-
+    v_table_differences := compare_tables(dev_schema_name, prod_schema_name, v_ddl_commands);
     DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ТАБЛИЦ <--------------------');
 
     DBMS_OUTPUT.PUT_LINE('');
@@ -133,12 +84,12 @@ BEGIN
                 SELECT dev.column_name, dev.data_type, dev.data_length, dev.nullable
                 FROM ALL_TAB_COLUMNS dev
                 JOIN ALL_TAB_COLUMNS prod
-                  ON dev.column_name = prod.column_name
+                ON dev.column_name = prod.column_name
                 WHERE dev.OWNER = dev_schema_name
-                  AND prod.OWNER = prod_schema_name
-                  AND dev.table_name = r_table.TABLE_NAME
-                  AND prod.table_name = r_table.TABLE_NAME
-                  AND (dev.data_type != prod.data_type
+                AND prod.OWNER = prod_schema_name
+                AND dev.table_name = r_table.TABLE_NAME
+                AND prod.table_name = r_table.TABLE_NAME
+                AND (dev.data_type != prod.data_type
                     OR dev.data_length != prod.data_length
                     OR dev.nullable != prod.nullable)
             ) LOOP
@@ -149,10 +100,15 @@ BEGIN
                 END IF;
 
                 DBMS_OUTPUT.PUT_LINE('  - Столбец ' || r_column.column_name || ' отличается.');
+                
                 v_ddl_commands.EXTEND;
-                v_ddl_commands(v_ddl_commands.COUNT) := 'ALTER TABLE ' || prod_schema_name || '.' || r_table.TABLE_NAME || ' MODIFY ' || r_column.column_name || ' ' || r_column.data_type || '(' || r_column.data_length || ');';
+                v_ddl_commands(v_ddl_commands.COUNT) := 
+                    'ALTER TABLE ' || prod_schema_name || '.' || r_table.TABLE_NAME || 
+                    ' MODIFY ' || r_column.column_name || ' ' || r_column.data_type || 
+                    '(' || r_column.data_length || ')' || 
+                    CASE WHEN r_column.nullable = 'N' THEN ' NOT NULL' ELSE '' END || ';';
             END LOOP;
-        END;
+         END;
     END LOOP;
 
     IF NOT v_any_differences THEN
@@ -161,13 +117,81 @@ BEGIN
 
     DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ СТРУКТУР ТАБЛИЦ <--------------------');
 
+    --DBMS_OUTPUT.PUT_LINE('');
+
+    --DBMS_OUTPUT.PUT_LINE('--------------------> ДОБАВЛЕНИЕ ОГРАНИЧЕНИЙ <--------------------');
+
+    FOR r_table IN (
+        SELECT TABLE_NAME 
+        FROM ALL_TABLES 
+        WHERE OWNER = dev_schema_name
+        AND TABLE_NAME NOT IN (
+            SELECT TABLE_NAME 
+            FROM ALL_TABLES 
+            WHERE OWNER = prod_schema_name
+        )
+    ) LOOP
+        FOR r_constraint IN (
+            SELECT ac.constraint_name, acc.column_name
+            FROM ALL_CONSTRAINTS ac
+            JOIN ALL_CONS_COLUMNS acc
+            ON ac.constraint_name = acc.constraint_name
+            WHERE ac.OWNER = dev_schema_name
+            AND ac.table_name = r_table.TABLE_NAME
+            AND ac.constraint_type = 'P'
+        ) LOOP
+            v_ddl_commands.EXTEND;
+            v_ddl_commands(v_ddl_commands.COUNT) := 
+                'ALTER TABLE ' || prod_schema_name || '.' || r_table.TABLE_NAME || 
+                ' ADD CONSTRAINT ' || r_constraint.constraint_name || 
+                ' PRIMARY KEY (' || r_constraint.column_name || ');';
+        END LOOP;
+
+        FOR r_constraint IN (
+            SELECT a.constraint_name, acc.column_name, c.table_name AS referenced_table, c.column_name AS referenced_column
+            FROM ALL_CONSTRAINTS a
+            JOIN ALL_CONS_COLUMNS acc ON a.constraint_name = acc.constraint_name
+            JOIN ALL_CONS_COLUMNS c ON a.r_constraint_name = c.constraint_name
+            WHERE a.OWNER = dev_schema_name
+            AND a.table_name = r_table.TABLE_NAME
+            AND a.constraint_type = 'R'
+        ) LOOP
+            v_ddl_commands.EXTEND;
+            v_ddl_commands(v_ddl_commands.COUNT) := 
+                'ALTER TABLE ' || prod_schema_name || '.' || r_table.TABLE_NAME || 
+                ' ADD CONSTRAINT ' || r_constraint.constraint_name || 
+                ' FOREIGN KEY (' || r_constraint.column_name || ') REFERENCES ' || 
+                prod_schema_name || '.' || r_constraint.referenced_table || '(' || r_constraint.referenced_column || ');';
+        END LOOP;
+
+        FOR r_constraint IN (
+            SELECT ac.constraint_name, acc.column_name
+            FROM ALL_CONSTRAINTS ac
+            JOIN ALL_CONS_COLUMNS acc
+            ON ac.constraint_name = acc.constraint_name
+            WHERE ac.OWNER = dev_schema_name
+            AND ac.table_name = r_table.TABLE_NAME
+            AND ac.constraint_type = 'U'
+        ) LOOP
+            v_ddl_commands.EXTEND;
+            v_ddl_commands(v_ddl_commands.COUNT) := 
+                'ALTER TABLE ' || prod_schema_name || '.' || r_table.TABLE_NAME || 
+                ' ADD CONSTRAINT ' || r_constraint.constraint_name || 
+                ' UNIQUE (' || r_constraint.column_name || ');';
+        END LOOP;
+    END LOOP;
+
+    -- DBMS_OUTPUT.PUT_LINE('--------------------> ДОБАВЛЕНИЕ ОГРАНИЧЕНИЙ <--------------------');
+
+
     DBMS_OUTPUT.PUT_LINE('');
 
     DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ПРОЦЕДУР И ФУНКЦИЙ <--------------------');
 
     DECLARE
         v_has_proc_func_differences BOOLEAN := FALSE;
-        v_object_ddl CLOB;
+        v_object_ddl_dev CLOB;
+        v_object_ddl_prod CLOB;
     BEGIN
         FOR r_object IN (
             SELECT OBJECT_NAME, OBJECT_TYPE
@@ -178,25 +202,30 @@ BEGIN
                 SELECT OBJECT_NAME
                 FROM ALL_OBJECTS
                 WHERE OWNER = prod_schema_name
-                    AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION')
+                AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION')
             )
         ) LOOP
             IF NOT v_has_proc_func_differences THEN
                 v_has_proc_func_differences := TRUE;
             END IF;
-            DBMS_OUTPUT.PUT_LINE('Объект ' || r_object.OBJECT_TYPE || ' ' || r_object.OBJECT_NAME || ' есть в DEV_SCHEMA, но отсутствует в PROD_SCHEMA.');
+
+            DBMS_OUTPUT.PUT_LINE('Объект ' || r_object.OBJECT_TYPE || ' ' || r_object.OBJECT_NAME ||
+                                ' есть в DEV_SCHEMA, но отсутствует в PROD_SCHEMA.');
 
             BEGIN
                 SELECT DBMS_METADATA.GET_DDL(r_object.OBJECT_TYPE, r_object.OBJECT_NAME, dev_schema_name)
-                INTO v_object_ddl
+                INTO v_object_ddl_dev
                 FROM DUAL;
+                
+                DBMS_OUTPUT.PUT_LINE('Полученный DDL из DEV_SCHEMA: ' || v_object_ddl_dev);
             EXCEPTION
                 WHEN OTHERS THEN
-                    v_object_ddl := '-- Не удалось извлечь DDL для объекта ' || r_object.OBJECT_NAME;
+                    DBMS_OUTPUT.PUT_LINE('-- Не удалось извлечь DDL для объекта ' || r_object.OBJECT_NAME ||
+                                        ' в DEV_SCHEMA (Ошибка: ' || SQLERRM || ')');
             END;
 
             v_ddl_commands.EXTEND;
-            v_ddl_commands(v_ddl_commands.COUNT) := v_object_ddl;
+            v_ddl_commands(v_ddl_commands.COUNT) := '-- Отсутствует в PROD_SCHEMA: ' || r_object.OBJECT_NAME;
         END LOOP;
 
         FOR r_object IN (
@@ -208,15 +237,59 @@ BEGIN
                 SELECT OBJECT_NAME
                 FROM ALL_OBJECTS
                 WHERE OWNER = dev_schema_name
-                    AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION')
+                AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION')
             )
         ) LOOP
             IF NOT v_has_proc_func_differences THEN
                 v_has_proc_func_differences := TRUE;
             END IF;
-            DBMS_OUTPUT.PUT_LINE('Объект ' || r_object.OBJECT_TYPE || ' ' || r_object.OBJECT_NAME || ' есть в PROD_SCHEMA, но отсутствует в DEV_SCHEMA.');
+
+            DBMS_OUTPUT.PUT_LINE('Объект ' || r_object.OBJECT_TYPE || ' ' || r_object.OBJECT_NAME ||
+                                ' есть в PROD_SCHEMA, но отсутствует в DEV_SCHEMA.');
+
+            BEGIN
+                SELECT DBMS_METADATA.GET_DDL(r_object.OBJECT_TYPE, r_object.OBJECT_NAME, prod_schema_name)
+                INTO v_object_ddl_prod
+                FROM DUAL;
+                
+                DBMS_OUTPUT.PUT_LINE('Полученный DDL из PROD_SCHEMA: ' || v_object_ddl_prod);
+            EXCEPTION
+                WHEN OTHERS THEN
+                    DBMS_OUTPUT.PUT_LINE('-- Не удалось извлечь DDL для объекта ' || r_object.OBJECT_NAME ||
+                                        ' в PROD_SCHEMA (Ошибка: ' || SQLERRM || ')');
+            END;
+
             v_ddl_commands.EXTEND;
             v_ddl_commands(v_ddl_commands.COUNT) := 'DROP ' || r_object.OBJECT_TYPE || ' ' || prod_schema_name || '.' || r_object.OBJECT_NAME || ';';
+        END LOOP;
+
+        FOR r_object IN (
+            SELECT OBJECT_NAME, OBJECT_TYPE
+            FROM ALL_OBJECTS
+            WHERE OWNER = dev_schema_name
+            AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION')
+        ) LOOP
+            BEGIN
+                SELECT DBMS_METADATA.GET_DDL(r_object.OBJECT_TYPE, r_object.OBJECT_NAME, dev_schema_name)
+                INTO v_object_ddl_dev
+                FROM DUAL;
+
+                SELECT DBMS_METADATA.GET_DDL(r_object.OBJECT_TYPE, r_object.OBJECT_NAME, prod_schema_name)
+                INTO v_object_ddl_prod
+                FROM DUAL;
+
+                IF v_object_ddl_dev != v_object_ddl_prod THEN
+                    DBMS_OUTPUT.PUT_LINE('Различия в коде между объектами ' || r_object.OBJECT_TYPE || ' ' || r_object.OBJECT_NAME ||
+                                        ' в DEV_SCHEMA и PROD_SCHEMA');
+                    DBMS_OUTPUT.PUT_LINE('Код в DEV_SCHEMA: ' || v_object_ddl_dev);
+                    DBMS_OUTPUT.PUT_LINE('Код в PROD_SCHEMA: ' || v_object_ddl_prod);
+                END IF;
+
+            EXCEPTION
+                WHEN OTHERS THEN
+                    DBMS_OUTPUT.PUT_LINE('-- Не удалось извлечь DDL для объекта ' || r_object.OBJECT_NAME || 
+                                        ' в процессе сравнения (Ошибка: ' || SQLERRM || ')');
+            END;
         END LOOP;
 
         IF NOT v_has_proc_func_differences THEN
@@ -225,6 +298,7 @@ BEGIN
     END;
 
     DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ПРОЦЕДУР И ФУНКЦИЙ <--------------------');
+
 
     DBMS_OUTPUT.PUT_LINE('');
 
@@ -348,6 +422,10 @@ BEGIN
 
     DBMS_OUTPUT.PUT_LINE('--------------------> ПОРЯДОК СОЗДАНИЯ ТАБЛИЦ <--------------------');
 
+    IF v_tables.COUNT = 0 THEN
+        DBMS_OUTPUT.PUT_LINE('Все таблицы из DEV_SCHEMA присутствуют в DEV_SCHEMA:');
+    END IF;
+
     DECLARE
         TYPE table_dep_list IS TABLE OF VARCHAR2(30);
         v_independent_tables table_dep_list;
@@ -407,6 +485,8 @@ BEGIN
             WHERE a.owner = dev_schema_name
             AND c.owner = dev_schema_name
             AND a.constraint_type = 'R'
+            AND a.table_name NOT IN (SELECT table_name FROM all_tables WHERE owner = prod_schema_name)  -- Check child table not in prod_schema
+            AND c.table_name NOT IN (SELECT table_name FROM all_tables WHERE owner = prod_schema_name)  -- Check parent table not in prod_schema
         )
         SELECT DISTINCT child_table BULK COLLECT INTO v_circular_tables
         FROM cycle_detection d1
@@ -463,6 +543,8 @@ BEGIN
                 WHERE a.owner = dev_schema_name
                 AND c.owner = dev_schema_name
                 AND a.constraint_type = 'R'
+                AND a.table_name NOT IN (SELECT table_name FROM all_tables WHERE owner = prod_schema_name)  -- Check child table not in prod_schema
+                AND c.table_name NOT IN (SELECT table_name FROM all_tables WHERE owner = prod_schema_name)  -- Check parent table not in prod_schema
             )
             SELECT child_table, parent_table
             BULK COLLECT INTO v_cycles
@@ -484,6 +566,7 @@ BEGIN
 
     DBMS_OUTPUT.PUT_LINE('--------------------> ПОРЯДОК СОЗДАНИЯ ТАБЛИЦ <--------------------');
 
+
     DBMS_OUTPUT.PUT_LINE('');
 
     DBMS_OUTPUT.PUT_LINE('--------------------> DDL-СКРИПТ ДЛЯ ОБНОВЛЕНИЯ <--------------------');
@@ -498,5 +581,3 @@ BEGIN
 
     DBMS_OUTPUT.PUT_LINE('');
 END;
-
-SET SERVEROUTPUT ON;
