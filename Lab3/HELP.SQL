@@ -2,9 +2,7 @@ CREATE OR REPLACE PROCEDURE compare_schemes(
     dev_schema_name IN VARCHAR2,
     prod_schema_name IN VARCHAR2
 ) IS
-    TYPE table_list IS TABLE OF VARCHAR2(30);
-    v_ddl_commands SYS.ODCIVARCHAR2LIST := SYS.ODCIVARCHAR2LIST();
-    v_tables table_list;
+    v_ddl_commands CLOB_LIST := CLOB_LIST();
     v_has_differences BOOLEAN := FALSE;
     v_table_differences BOOLEAN := FALSE;
     v_any_differences BOOLEAN := FALSE;
@@ -31,7 +29,19 @@ BEGIN
 
     DBMS_OUTPUT.PUT_LINE('');
 
+    DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ИНДЕКСОВ <--------------------');
+    DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ИНДЕКСОВ <--------------------');
+
+    DBMS_OUTPUT.PUT_LINE('');
+
+    DBMS_OUTPUT.PUT_LINE('--------------------> ДДЛ КОМАНДЫ <--------------------');
+    FOR i IN 1 .. v_ddl_commands.COUNT LOOP
+        DBMS_OUTPUT.PUT_LINE(v_ddl_commands(i));
+    END LOOP;
+    DBMS_OUTPUT.PUT_LINE('--------------------> ДДЛ КОМАНДЫ <--------------------');
+    
 END;
+
 
 
 
@@ -40,7 +50,7 @@ END;
 CREATE OR REPLACE FUNCTION compare_tables(
     dev_schema_name IN VARCHAR2,
     prod_schema_name IN VARCHAR2,
-    v_ddl_commands IN OUT SYS.ODCIVARCHAR2LIST
+    v_ddl_commands IN OUT CLOB_LIST
 ) RETURN BOOLEAN IS
     TYPE table_list IS TABLE OF VARCHAR2(30);
     v_tables table_list;
@@ -83,7 +93,7 @@ END compare_tables;
 CREATE OR REPLACE FUNCTION compare_table_structure(
     dev_schema_name IN VARCHAR2,
     prod_schema_name IN VARCHAR2,
-    v_ddl_commands IN OUT SYS.ODCIVARCHAR2LIST
+    v_ddl_commands IN OUT CLOB_LIST
 ) RETURN BOOLEAN IS
     v_has_differences BOOLEAN := FALSE;
     v_any_differences BOOLEAN := FALSE;
@@ -180,7 +190,7 @@ END compare_table_structure;
 CREATE OR REPLACE PROCEDURE add_constraints(
     dev_schema_name IN VARCHAR2,
     prod_schema_name IN VARCHAR2,
-    v_ddl_commands IN OUT SYS.ODCIVARCHAR2LIST
+    v_ddl_commands IN OUT CLOB_LIST
 ) IS
     PROCEDURE add_command(command IN VARCHAR2) IS
     BEGIN
@@ -244,7 +254,6 @@ END add_constraints;
 
 
 
-
 CREATE OR REPLACE PROCEDURE get_plsql_procs_and_funcs(
   p_schema_name IN VARCHAR2, 
   p_object_name IN VARCHAR2, 
@@ -273,6 +282,7 @@ BEGIN
       BEGIN
         v_text := TRIM(TRIM(CHR(10) FROM proc_func.text)); 
         IF LENGTH(v_text) > 0 THEN
+           v_text := REGEXP_REPLACE(v_text, '\s+', ' ');
            v_code := v_code || v_text || CHR(10);
         END IF;
       END;
@@ -284,11 +294,10 @@ END get_plsql_procs_and_funcs;
 
 
 
-
 CREATE OR REPLACE PROCEDURE compare_functions_and_procedures(
     dev_schema_name IN VARCHAR2,
     prod_schema_name IN VARCHAR2,
-    v_ddl_commands IN OUT SYS.ODCIVARCHAR2LIST
+    v_ddl_commands IN OUT CLOB_LIST
 ) IS
     v_dev_code CLOB; 
     v_prod_code CLOB; 
@@ -312,14 +321,23 @@ BEGIN
         END IF;
 
         get_plsql_procs_and_funcs(dev_schema_name, dev_only.object_name, v_dev_code);
-        --v_ddl_commands.EXTEND;
-        --v_ddl_commands(v_ddl_commands.COUNT) := 'CREATE OR REPLACE ' || v_dev_code;
+
+        IF v_dev_code LIKE 'PROCEDURE%' THEN
+            v_dev_code := SUBSTR(v_dev_code, INSTR(v_dev_code, 'IS') + 2); 
+        ELSIF v_dev_code LIKE 'FUNCTION%' THEN
+            v_dev_code := SUBSTR(v_dev_code, INSTR(v_dev_code, 'IS') + 2);  
+        END IF;
+
+        v_ddl_commands.EXTEND;
+        v_ddl_commands(v_ddl_commands.COUNT) := '';  
+        v_ddl_commands.EXTEND;
+        v_ddl_commands(v_ddl_commands.COUNT) := '';  
+        v_ddl_commands.EXTEND;
+        v_ddl_commands(v_ddl_commands.COUNT) := 'CREATE OR REPLACE ' || dev_only.object_type || ' ' || prod_schema_name || '.' || dev_only.object_name || ' AS ' || v_dev_code;
+
         DBMS_OUTPUT.PUT_LINE('  - ' || dev_only.object_name);
     END LOOP;
 
-    IF NOT v_has_diff THEN
-        DBMS_OUTPUT.PUT_LINE('  - Отсутствуют');
-    END IF;
 
     FOR prod_only IN (
         SELECT object_name, object_type
@@ -338,16 +356,18 @@ BEGIN
             v_has_diff := TRUE;
         END IF;
 
-        --v_ddl_commands.EXTEND;
-        --v_ddl_commands(v_ddl_commands.COUNT) := 'DROP ' || prod_only.object_type || ' ' || prod_schema_name || '.' || prod_only.object_name;
+        v_ddl_commands.EXTEND;
+        v_ddl_commands(v_ddl_commands.COUNT) := '';
+        v_ddl_commands.EXTEND;
+        v_ddl_commands(v_ddl_commands.COUNT) := '';
+        v_ddl_commands.EXTEND;
+        v_ddl_commands(v_ddl_commands.COUNT) := 'DROP ' || prod_only.object_type || ' ' || prod_schema_name || '.' || prod_only.object_name;
+
         DBMS_OUTPUT.PUT_LINE('  - ' || prod_only.object_name);
     END LOOP;
 
-    IF NOT v_has_diff THEN
-        DBMS_OUTPUT.PUT_LINE('  - Отсутствуют');
-    END IF;
 
-    FOR common_obj IN (
+   FOR common_obj IN (
         SELECT dev.object_name, dev.object_type
         FROM all_objects dev
         JOIN all_objects prod
@@ -361,18 +381,39 @@ BEGIN
         get_plsql_procs_and_funcs(prod_schema_name, common_obj.object_name, v_prod_code);
 
         IF v_dev_code <> v_prod_code THEN
+            DBMS_OUTPUT.PUT_LINE(v_dev_code);
+            DBMS_OUTPUT.PUT_LINE(v_prod_code);
+
             IF NOT v_has_diff THEN
                 DBMS_OUTPUT.PUT_LINE('Функции и процедуры, которые отличаются между ' || UPPER(dev_schema_name) || ' и ' || UPPER(prod_schema_name) || ':');
                 v_has_diff := TRUE;
             END IF;
 
-            --v_ddl_commands.EXTEND;
-            --v_ddl_commands(v_ddl_commands.COUNT) := 'CREATE OR REPLACE ' || v_dev_code;
-            DBMS_OUTPUT.PUT_LINE('  - ' || common_obj.object_name || ' (отличается)');
+            IF v_dev_code LIKE 'PROCEDURE%' OR v_dev_code LIKE 'FUNCTION%' THEN
+                IF INSTR(v_dev_code, 'IS') > 0 THEN
+                    v_dev_code := SUBSTR(v_dev_code, INSTR(v_dev_code, 'IS') + 2);
+                ELSIF INSTR(v_dev_code, 'AS') > 0 THEN
+                    v_dev_code := SUBSTR(v_dev_code, INSTR(v_dev_code, 'AS') + 2);
+                END IF;
+            END IF;
+
+            v_ddl_commands.EXTEND;
+            v_ddl_commands(v_ddl_commands.COUNT) := '';
+            v_ddl_commands.EXTEND;
+            v_ddl_commands(v_ddl_commands.COUNT) := ''; 
+            v_ddl_commands.EXTEND;
+            v_ddl_commands(v_ddl_commands.COUNT) := 'CREATE OR REPLACE ' || common_obj.object_type || ' ' || prod_schema_name || '.' || common_obj.object_name || ' AS ' || v_dev_code;
+
+            DBMS_OUTPUT.PUT_LINE('  - ' || common_obj.object_name);
         END IF;
     END LOOP;
+
 
     IF NOT v_has_diff THEN
         DBMS_OUTPUT.PUT_LINE('Функции и процедуры в схемах ' || UPPER(dev_schema_name) || ' и ' || UPPER(prod_schema_name) || ' совпадают.');
     END IF;
 END compare_functions_and_procedures;
+
+
+
+CREATE OR REPLACE TYPE CLOB_LIST AS TABLE OF CLOB;
