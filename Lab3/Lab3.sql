@@ -1,3 +1,6 @@
+CREATE OR REPLACE TYPE CLOB_LIST AS TABLE OF CLOB;
+
+
 CREATE OR REPLACE PROCEDURE compare_schemes(
     dev_schema_name IN VARCHAR2,
     prod_schema_name IN VARCHAR2
@@ -49,6 +52,7 @@ BEGIN
 
     DBMS_OUTPUT.PUT_LINE('');
 
+    IF v_ddl_commands.COUNT > 0 THEN
     DBMS_OUTPUT.PUT_LINE('--------------------> ДДЛ КОМАНДЫ <--------------------');
     FOR i IN 1 .. v_ddl_commands.COUNT LOOP
         DBMS_OUTPUT.PUT_LINE(v_ddl_commands(i));
@@ -56,6 +60,7 @@ BEGIN
     DBMS_OUTPUT.PUT_LINE('--------------------> ДДЛ КОМАНДЫ <--------------------');
 
     DBMS_OUTPUT.PUT_LINE('');
+    END IF;
 END;
 
 CREATE OR REPLACE FUNCTION compare_tables(
@@ -85,7 +90,7 @@ CREATE OR REPLACE FUNCTION compare_tables(
             END LOOP;
             v_table_differences := TRUE;
         ELSE
-            DBMS_OUTPUT.PUT_LINE('Все таблицы из ' || source_schema || ' присутствуют в ' || target_schema || '.');
+            DBMS_OUTPUT.PUT_LINE(' - Все таблицы из ' || source_schema || ' присутствуют в ' || target_schema || '.');
         END IF;
     END compare_and_generate_ddl;
 BEGIN
@@ -216,17 +221,31 @@ BEGIN
                    CASE ac.constraint_type 
                        WHEN 'P' THEN 'PRIMARY KEY'
                        WHEN 'U' THEN 'UNIQUE'
-                   END AS constraint_type,
-                   NULL AS referenced_table,
-                   NULL AS referenced_column
+                   END AS constraint_type
             FROM ALL_CONSTRAINTS ac
             JOIN ALL_CONS_COLUMNS acc ON ac.constraint_name = acc.constraint_name
             WHERE ac.OWNER = dev_schema_name
               AND ac.table_name = r_table.TABLE_NAME
               AND ac.constraint_type IN ('P', 'U')
+        ) LOOP
+            add_command('ALTER TABLE ' || prod_schema_name || '.' || r_table.TABLE_NAME || 
+                        ' ADD CONSTRAINT ' || r_constraint.constraint_name || 
+                        ' ' || r_constraint.constraint_type || 
+                        ' (' || r_constraint.column_name || ');');
+        END LOOP;
+    END LOOP;
 
-            UNION ALL
-
+    FOR r_table IN (
+        SELECT TABLE_NAME 
+        FROM ALL_TABLES 
+        WHERE OWNER = dev_schema_name
+        AND TABLE_NAME NOT IN (
+            SELECT TABLE_NAME 
+            FROM ALL_TABLES 
+            WHERE OWNER = prod_schema_name
+        )
+    ) LOOP
+        FOR r_constraint IN (
             SELECT a.constraint_name, acc.column_name, 
                    'FOREIGN KEY' AS constraint_type,
                    c.table_name AS referenced_table,
@@ -238,18 +257,11 @@ BEGIN
               AND a.table_name = r_table.TABLE_NAME
               AND a.constraint_type = 'R'
         ) LOOP
-            IF r_constraint.constraint_type = 'FOREIGN KEY' THEN
-                add_command('ALTER TABLE ' || prod_schema_name || '.' || r_table.TABLE_NAME || 
-                            ' ADD CONSTRAINT ' || r_constraint.constraint_name || 
-                            ' FOREIGN KEY (' || r_constraint.column_name || 
-                            ') REFERENCES ' || prod_schema_name || '.' || 
-                            r_constraint.referenced_table || '(' || r_constraint.referenced_column || ');');
-            ELSE
-                add_command('ALTER TABLE ' || prod_schema_name || '.' || r_table.TABLE_NAME || 
-                            ' ADD CONSTRAINT ' || r_constraint.constraint_name || 
-                            ' ' || r_constraint.constraint_type || 
-                            ' (' || r_constraint.column_name || ');');
-            END IF;
+            add_command('ALTER TABLE ' || prod_schema_name || '.' || r_table.TABLE_NAME || 
+                        ' ADD CONSTRAINT ' || r_constraint.constraint_name || 
+                        ' FOREIGN KEY (' || r_constraint.column_name || 
+                        ') REFERENCES ' || prod_schema_name || '.' || 
+                        r_constraint.referenced_table || '(' || r_constraint.referenced_column || ');');
         END LOOP;
     END LOOP;
 END add_constraints;
@@ -379,6 +391,9 @@ BEGIN
         get_plsql_procs_and_funcs(prod_schema_name, common_obj.object_name, v_prod_code);
 
         IF v_dev_code <> v_prod_code THEN
+            DBMS_OUTPUT.PUT_LINE(v_dev_code);
+            DBMS_OUTPUT.PUT_LINE(v_prod_code);
+
             IF NOT v_has_diff THEN
                 DBMS_OUTPUT.PUT_LINE('Функции и процедуры, которые отличаются между ' || UPPER(dev_schema_name) || ' и ' || UPPER(prod_schema_name) || ':');
                 v_has_diff := TRUE;
@@ -703,8 +718,3 @@ BEGIN
         END LOOP;
     END IF;
 END determine_table_creation_order;
-
-CREATE OR REPLACE TYPE CLOB_LIST AS TABLE OF CLOB;
-
-
-

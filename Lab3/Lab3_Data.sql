@@ -30,7 +30,7 @@ CREATE TABLE common_table (
     age NUMBER
 );
 
-CREATE OR REPLACE PROCEDURE hello_world IS 
+CREATE OR REPLACE PROCEDURE HELLO_WORLD IS 
 BEGIN
     DBMS_OUTPUT.PUT_LINE('Привет, мир!');
 END hello_world;
@@ -63,16 +63,23 @@ CREATE TABLE departments (
 CREATE TABLE employees (
     employee_id NUMBER PRIMARY KEY,
     employee_name VARCHAR2(100) NOT NULL,
-    department_id NUMBER,
-    CONSTRAINT fk_department FOREIGN KEY (department_id) REFERENCES departments(department_id)
+    department_id NUMBER
 );
 
 CREATE TABLE projects (
     project_id NUMBER PRIMARY KEY,
     project_name VARCHAR2(100) NOT NULL,
-    employee_id NUMBER,
-    CONSTRAINT fk_employee FOREIGN KEY (employee_id) REFERENCES employees(employee_id)
+    employee_id NUMBER
 );
+
+ALTER TABLE employees
+ADD CONSTRAINT fk_department FOREIGN KEY (department_id) 
+REFERENCES departments(department_id);
+
+ALTER TABLE projects
+ADD CONSTRAINT fk_employee FOREIGN KEY (employee_id) 
+REFERENCES employees(employee_id);
+
 
 CREATE TABLE team_leads (
     lead_id NUMBER PRIMARY KEY,
