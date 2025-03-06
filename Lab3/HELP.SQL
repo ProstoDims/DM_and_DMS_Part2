@@ -26,12 +26,16 @@ BEGIN
     DBMS_OUTPUT.PUT_LINE('');
 
     DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ПРОЦЕДУР И ФУНКЦИЙ <--------------------');
-    compare_procedures_and_functions(dev_schema_name, prod_schema_name, v_ddl_commands);
+    compare_functions_and_procedures(dev_schema_name, prod_schema_name, v_ddl_commands);
     DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ПРОЦЕДУР И ФУНКЦИЙ <--------------------');
 
     DBMS_OUTPUT.PUT_LINE('');
 
 END;
+
+
+
+
 
 CREATE OR REPLACE FUNCTION compare_tables(
     dev_schema_name IN VARCHAR2,
@@ -71,6 +75,9 @@ BEGIN
 
     RETURN v_table_differences;
 END compare_tables;
+
+
+
 
 
 CREATE OR REPLACE FUNCTION compare_table_structure(
@@ -166,6 +173,10 @@ BEGIN
     RETURN v_any_differences;
 END compare_table_structure;
 
+
+
+
+
 CREATE OR REPLACE PROCEDURE add_constraints(
     dev_schema_name IN VARCHAR2,
     prod_schema_name IN VARCHAR2,
@@ -231,6 +242,9 @@ BEGIN
 END add_constraints;
 
 
+
+
+
 CREATE OR REPLACE PROCEDURE get_plsql_procs_and_funcs(
   p_schema_name IN VARCHAR2, 
   p_object_name IN VARCHAR2, 
@@ -268,10 +282,97 @@ BEGIN
   p_code := v_code;
 END get_plsql_procs_and_funcs;
 
-DECLARE
-  v_code VARCHAR2(32767);
-BEGIN
-  get_plsql_procs_and_funcs('DEV_SCHEMA', 'HELLO_WORLD', v_code);
-  DBMS_OUTPUT.put_line(v_code);
-END;
 
+
+
+CREATE OR REPLACE PROCEDURE compare_functions_and_procedures(
+    dev_schema_name IN VARCHAR2,
+    prod_schema_name IN VARCHAR2,
+    v_ddl_commands IN OUT SYS.ODCIVARCHAR2LIST
+) IS
+    v_dev_code CLOB; 
+    v_prod_code CLOB; 
+    v_has_diff BOOLEAN := FALSE;
+BEGIN
+    FOR dev_only IN (
+        SELECT object_name, object_type
+        FROM all_objects
+        WHERE (object_type = 'FUNCTION' OR object_type = 'PROCEDURE')
+        AND owner = UPPER(dev_schema_name)
+        AND object_name NOT IN (
+            SELECT object_name
+            FROM all_objects
+            WHERE (object_type = 'FUNCTION' OR object_type = 'PROCEDURE')
+            AND owner = UPPER(prod_schema_name)
+        )
+    ) LOOP
+        IF NOT v_has_diff THEN
+            DBMS_OUTPUT.PUT_LINE('Функции и процедуры, которые есть в ' || UPPER(dev_schema_name) || ', но отсутствуют в ' || UPPER(prod_schema_name) || ':');
+            v_has_diff := TRUE;
+        END IF;
+
+        get_plsql_procs_and_funcs(dev_schema_name, dev_only.object_name, v_dev_code);
+        --v_ddl_commands.EXTEND;
+        --v_ddl_commands(v_ddl_commands.COUNT) := 'CREATE OR REPLACE ' || v_dev_code;
+        DBMS_OUTPUT.PUT_LINE('  - ' || dev_only.object_name);
+    END LOOP;
+
+    IF NOT v_has_diff THEN
+        DBMS_OUTPUT.PUT_LINE('  - Отсутствуют');
+    END IF;
+
+    FOR prod_only IN (
+        SELECT object_name, object_type
+        FROM all_objects
+        WHERE (object_type = 'FUNCTION' OR object_type = 'PROCEDURE')
+        AND owner = UPPER(prod_schema_name)
+        AND object_name NOT IN (
+            SELECT object_name
+            FROM all_objects
+            WHERE (object_type = 'FUNCTION' OR object_type = 'PROCEDURE')
+            AND owner = UPPER(dev_schema_name)
+        )
+    ) LOOP
+        IF NOT v_has_diff THEN
+            DBMS_OUTPUT.PUT_LINE('Функции и процедуры, которые есть в ' || UPPER(prod_schema_name) || ', но отсутствуют в ' || UPPER(dev_schema_name) || ':');
+            v_has_diff := TRUE;
+        END IF;
+
+        --v_ddl_commands.EXTEND;
+        --v_ddl_commands(v_ddl_commands.COUNT) := 'DROP ' || prod_only.object_type || ' ' || prod_schema_name || '.' || prod_only.object_name;
+        DBMS_OUTPUT.PUT_LINE('  - ' || prod_only.object_name);
+    END LOOP;
+
+    IF NOT v_has_diff THEN
+        DBMS_OUTPUT.PUT_LINE('  - Отсутствуют');
+    END IF;
+
+    FOR common_obj IN (
+        SELECT dev.object_name, dev.object_type
+        FROM all_objects dev
+        JOIN all_objects prod
+        ON dev.object_name = prod.object_name
+        AND dev.object_type = prod.object_type
+        WHERE (dev.object_type = 'FUNCTION' OR dev.object_type = 'PROCEDURE')
+        AND dev.owner = UPPER(dev_schema_name)
+        AND prod.owner = UPPER(prod_schema_name)
+    ) LOOP
+        get_plsql_procs_and_funcs(dev_schema_name, common_obj.object_name, v_dev_code);
+        get_plsql_procs_and_funcs(prod_schema_name, common_obj.object_name, v_prod_code);
+
+        IF v_dev_code <> v_prod_code THEN
+            IF NOT v_has_diff THEN
+                DBMS_OUTPUT.PUT_LINE('Функции и процедуры, которые отличаются между ' || UPPER(dev_schema_name) || ' и ' || UPPER(prod_schema_name) || ':');
+                v_has_diff := TRUE;
+            END IF;
+
+            --v_ddl_commands.EXTEND;
+            --v_ddl_commands(v_ddl_commands.COUNT) := 'CREATE OR REPLACE ' || v_dev_code;
+            DBMS_OUTPUT.PUT_LINE('  - ' || common_obj.object_name || ' (отличается)');
+        END IF;
+    END LOOP;
+
+    IF NOT v_has_diff THEN
+        DBMS_OUTPUT.PUT_LINE('Функции и процедуры в схемах ' || UPPER(dev_schema_name) || ' и ' || UPPER(prod_schema_name) || ' совпадают.');
+    END IF;
+END compare_functions_and_procedures;
