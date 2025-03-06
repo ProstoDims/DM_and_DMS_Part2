@@ -15,70 +15,6 @@ CREATE OR REPLACE PROCEDURE compare_schemes(
 BEGIN
     DBMS_OUTPUT.PUT_LINE('');
 
-    DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ИНДЕКСОВ <--------------------');
-
-    DECLARE
-        v_has_index_differences BOOLEAN := FALSE;
-    BEGIN
-        FOR r_index IN (
-            SELECT i.INDEX_NAME, i.TABLE_NAME, LISTAGG(c.COLUMN_NAME, ', ') WITHIN GROUP (ORDER BY c.COLUMN_POSITION) AS COLUMN_LIST
-            FROM ALL_INDEXES i
-            JOIN ALL_IND_COLUMNS c ON i.INDEX_NAME = c.INDEX_NAME AND i.TABLE_NAME = c.TABLE_NAME AND i.OWNER = c.INDEX_OWNER
-            WHERE i.OWNER = dev_schema_name
-            AND i.TABLE_NAME IN (
-                SELECT TABLE_NAME
-                FROM ALL_TABLES
-                WHERE OWNER = prod_schema_name
-            )
-            AND i.INDEX_NAME NOT IN (
-                SELECT INDEX_NAME
-                FROM ALL_INDEXES
-                WHERE OWNER = prod_schema_name
-            )
-            GROUP BY i.INDEX_NAME, i.TABLE_NAME
-        ) LOOP
-            IF NOT v_has_index_differences THEN
-                v_has_index_differences := TRUE;
-            END IF;
-            DBMS_OUTPUT.PUT_LINE('Индекс ' || r_index.INDEX_NAME || ' есть в DEV_SCHEMA, но отсутствует в PROD_SCHEMA.');
-            v_ddl_commands.EXTEND;
-            v_ddl_commands(v_ddl_commands.COUNT) := 'CREATE INDEX ' || prod_schema_name || '.' || r_index.INDEX_NAME || ' ON ' || prod_schema_name || '.' || r_index.TABLE_NAME || '(' || r_index.COLUMN_LIST || ');';
-        END LOOP;
-
-        FOR r_index IN (
-            SELECT i.INDEX_NAME, i.TABLE_NAME, LISTAGG(c.COLUMN_NAME, ', ') WITHIN GROUP (ORDER BY c.COLUMN_POSITION) AS COLUMN_LIST
-            FROM ALL_INDEXES i
-            JOIN ALL_IND_COLUMNS c ON i.INDEX_NAME = c.INDEX_NAME AND i.TABLE_NAME = c.TABLE_NAME AND i.OWNER = c.INDEX_OWNER
-            WHERE i.OWNER = prod_schema_name
-            AND i.TABLE_NAME IN (
-                SELECT TABLE_NAME
-                FROM ALL_TABLES
-                WHERE OWNER = dev_schema_name
-            )
-            AND i.INDEX_NAME NOT IN (
-                SELECT INDEX_NAME
-                FROM ALL_INDEXES
-                WHERE OWNER = dev_schema_name
-            )
-            GROUP BY i.INDEX_NAME, i.TABLE_NAME
-        ) LOOP
-            IF NOT v_has_index_differences THEN
-                v_has_index_differences := TRUE;
-            END IF;
-            DBMS_OUTPUT.PUT_LINE('Индекс ' || r_index.INDEX_NAME || ' есть в PROD_SCHEMA, но отсутствует в DEV_SCHEMA.');
-            v_ddl_commands.EXTEND;
-            v_ddl_commands(v_ddl_commands.COUNT) := 'DROP INDEX ' || prod_schema_name || '.' || r_index.INDEX_NAME || ';';
-        END LOOP;
-
-        IF NOT v_has_index_differences THEN
-            DBMS_OUTPUT.PUT_LINE('Отличий в индексах между DEV_SCHEMA и PROD_SCHEMA не обнаружено.');
-        END IF;
-    END;
-
-    DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ИНДЕКСОВ <--------------------');
-
-    DBMS_OUTPUT.PUT_LINE('');
-
     DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ПАКЕТОВ <--------------------');
 
     DECLARE
@@ -278,19 +214,6 @@ BEGIN
     END;
 
     DBMS_OUTPUT.PUT_LINE('--------------------> ПОРЯДОК СОЗДАНИЯ ТАБЛИЦ <--------------------');
-
-
-    DBMS_OUTPUT.PUT_LINE('');
-
-    DBMS_OUTPUT.PUT_LINE('--------------------> DDL-СКРИПТ ДЛЯ ОБНОВЛЕНИЯ <--------------------');
-    IF v_ddl_commands.COUNT > 0 THEN
-        FOR i IN 1 .. v_ddl_commands.COUNT LOOP
-            DBMS_OUTPUT.PUT_LINE(v_ddl_commands(i));
-        END LOOP;
-    ELSE
-        DBMS_OUTPUT.PUT_LINE('DDL-скрипт не требуется: отличий между схемами не обнаружено.');
-    END IF;
-    DBMS_OUTPUT.PUT_LINE('--------------------> DDL-СКРИПТ ДЛЯ ОБНОВЛЕНИЯ <--------------------');
 
     DBMS_OUTPUT.PUT_LINE('');
 END;

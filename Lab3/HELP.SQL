@@ -30,6 +30,7 @@ BEGIN
     DBMS_OUTPUT.PUT_LINE('');
 
     DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ИНДЕКСОВ <--------------------');
+    compare_indexes(dev_schema_name, prod_schema_name, v_ddl_commands);
     DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ИНДЕКСОВ <--------------------');
 
     DBMS_OUTPUT.PUT_LINE('');
@@ -381,9 +382,6 @@ BEGIN
         get_plsql_procs_and_funcs(prod_schema_name, common_obj.object_name, v_prod_code);
 
         IF v_dev_code <> v_prod_code THEN
-            DBMS_OUTPUT.PUT_LINE(v_dev_code);
-            DBMS_OUTPUT.PUT_LINE(v_prod_code);
-
             IF NOT v_has_diff THEN
                 DBMS_OUTPUT.PUT_LINE('Функции и процедуры, которые отличаются между ' || UPPER(dev_schema_name) || ' и ' || UPPER(prod_schema_name) || ':');
                 v_has_diff := TRUE;
@@ -416,4 +414,71 @@ END compare_functions_and_procedures;
 
 
 
+CREATE OR REPLACE PROCEDURE compare_indexes(
+    dev_schema_name IN VARCHAR2,
+    prod_schema_name IN VARCHAR2,
+    ddl_commands IN OUT CLOB_LIST
+) IS
+    v_has_index_differences BOOLEAN := FALSE;
+BEGIN
+    FOR r_index IN (
+        SELECT i.INDEX_NAME, i.TABLE_NAME, LISTAGG(c.COLUMN_NAME, ', ') WITHIN GROUP (ORDER BY c.COLUMN_POSITION) AS COLUMN_LIST
+        FROM ALL_INDEXES i
+        JOIN ALL_IND_COLUMNS c ON i.INDEX_NAME = c.INDEX_NAME AND i.TABLE_NAME = c.TABLE_NAME AND i.OWNER = c.INDEX_OWNER
+        WHERE i.OWNER = dev_schema_name
+        AND i.TABLE_NAME IN (
+            SELECT TABLE_NAME
+            FROM ALL_TABLES
+            WHERE OWNER = prod_schema_name
+        )
+        AND i.INDEX_NAME NOT IN (
+            SELECT INDEX_NAME
+            FROM ALL_INDEXES
+            WHERE OWNER = prod_schema_name
+        )
+        GROUP BY i.INDEX_NAME, i.TABLE_NAME
+    ) LOOP
+        IF NOT v_has_index_differences THEN
+            v_has_index_differences := TRUE;
+        END IF;
+        DBMS_OUTPUT.PUT_LINE('Индекс ' || r_index.INDEX_NAME || ' есть в DEV_SCHEMA, но отсутствует в PROD_SCHEMA.');
+        ddl_commands.EXTEND;
+        ddl_commands(ddl_commands.COUNT) := 'CREATE INDEX ' || prod_schema_name || '.' || r_index.INDEX_NAME || ' ON ' || prod_schema_name || '.' || r_index.TABLE_NAME || '(' || r_index.COLUMN_LIST || ');';
+    END LOOP;
+
+    FOR r_index IN (
+        SELECT i.INDEX_NAME, i.TABLE_NAME, LISTAGG(c.COLUMN_NAME, ', ') WITHIN GROUP (ORDER BY c.COLUMN_POSITION) AS COLUMN_LIST
+        FROM ALL_INDEXES i
+        JOIN ALL_IND_COLUMNS c ON i.INDEX_NAME = c.INDEX_NAME AND i.TABLE_NAME = c.TABLE_NAME AND i.OWNER = c.INDEX_OWNER
+        WHERE i.OWNER = prod_schema_name
+        AND i.TABLE_NAME IN (
+            SELECT TABLE_NAME
+            FROM ALL_TABLES
+            WHERE OWNER = dev_schema_name
+        )
+        AND i.INDEX_NAME NOT IN (
+            SELECT INDEX_NAME
+            FROM ALL_INDEXES
+            WHERE OWNER = dev_schema_name
+        )
+        GROUP BY i.INDEX_NAME, i.TABLE_NAME
+    ) LOOP
+        IF NOT v_has_index_differences THEN
+            v_has_index_differences := TRUE;
+        END IF;
+        DBMS_OUTPUT.PUT_LINE('Индекс ' || r_index.INDEX_NAME || ' есть в PROD_SCHEMA, но отсутствует в DEV_SCHEMA.');
+        ddl_commands.EXTEND;
+        ddl_commands(ddl_commands.COUNT) := 'DROP INDEX ' || prod_schema_name || '.' || r_index.INDEX_NAME || ';';
+    END LOOP;
+
+    IF NOT v_has_index_differences THEN
+        DBMS_OUTPUT.PUT_LINE('Отличий в индексах между DEV_SCHEMA и PROD_SCHEMA не обнаружено.');
+    END IF;
+END compare_indexes;
+
+
+
 CREATE OR REPLACE TYPE CLOB_LIST AS TABLE OF CLOB;
+
+
+
