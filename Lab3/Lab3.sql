@@ -15,65 +15,8 @@ CREATE OR REPLACE PROCEDURE compare_schemes(
 BEGIN
     DBMS_OUTPUT.PUT_LINE('');
 
-    DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ПАКЕТОВ <--------------------');
-
-    DECLARE
-        v_has_package_differences BOOLEAN := FALSE;
-    BEGIN
-        FOR r_package IN (
-            SELECT OBJECT_NAME
-            FROM ALL_OBJECTS
-            WHERE OWNER = dev_schema_name
-              AND OBJECT_TYPE = 'PACKAGE'
-              AND OBJECT_NAME NOT IN (
-                  SELECT OBJECT_NAME
-                  FROM ALL_OBJECTS
-                  WHERE OWNER = prod_schema_name
-                    AND OBJECT_TYPE = 'PACKAGE'
-              )
-        ) LOOP
-            IF NOT v_has_package_differences THEN
-                v_has_package_differences := TRUE;
-            END IF;
-            DBMS_OUTPUT.PUT_LINE('Пакет ' || r_package.OBJECT_NAME || ' есть в DEV_SCHEMA, но отсутствует в PROD_SCHEMA.');
-            v_ddl_commands.EXTEND;
-            v_ddl_commands(v_ddl_commands.COUNT) := 'CREATE OR REPLACE PACKAGE ' || prod_schema_name || '.' || r_package.OBJECT_NAME || ' AS <код_пакета>;';
-        END LOOP;
-
-        FOR r_package IN (
-            SELECT OBJECT_NAME
-            FROM ALL_OBJECTS
-            WHERE OWNER = prod_schema_name
-              AND OBJECT_TYPE = 'PACKAGE'
-              AND OBJECT_NAME NOT IN (
-                  SELECT OBJECT_NAME
-                  FROM ALL_OBJECTS
-                  WHERE OWNER = dev_schema_name
-                    AND OBJECT_TYPE = 'PACKAGE'
-              )
-        ) LOOP
-            IF NOT v_has_package_differences THEN
-                v_has_package_differences := TRUE;
-            END IF;
-            DBMS_OUTPUT.PUT_LINE('Пакет ' || r_package.OBJECT_NAME || ' есть в PROD_SCHEMA, но отсутствует в DEV_SCHEMA.');
-            v_ddl_commands.EXTEND;
-            v_ddl_commands(v_ddl_commands.COUNT) := 'DROP PACKAGE ' || prod_schema_name || '.' || r_package.OBJECT_NAME || ';';
-        END LOOP;
-
-        IF NOT v_has_package_differences THEN
-            DBMS_OUTPUT.PUT_LINE('Отличий в пакетах между DEV_SCHEMA и PROD_SCHEMA не обнаружено.');
-        END IF;
-    END;
-
-    DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ПАКЕТОВ <--------------------');
-
-    DBMS_OUTPUT.PUT_LINE('');
 
     DBMS_OUTPUT.PUT_LINE('--------------------> ПОРЯДОК СОЗДАНИЯ ТАБЛИЦ <--------------------');
-
-    IF v_tables.COUNT = 0 THEN
-        DBMS_OUTPUT.PUT_LINE('Все таблицы из DEV_SCHEMA присутствуют в DEV_SCHEMA:');
-    END IF;
 
     DECLARE
         TYPE table_dep_list IS TABLE OF VARCHAR2(30);
