@@ -35,12 +35,19 @@ BEGIN
 
     DBMS_OUTPUT.PUT_LINE('');
 
+    DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ПАКЕТОВ <--------------------');
+    compare_packages(dev_schema_name, prod_schema_name, v_ddl_commands);
+    DBMS_OUTPUT.PUT_LINE('--------------------> СРАВНЕНИЕ ПАКЕТОВ <--------------------');
+
+    DBMS_OUTPUT.PUT_LINE('');
+
     DBMS_OUTPUT.PUT_LINE('--------------------> ДДЛ КОМАНДЫ <--------------------');
     FOR i IN 1 .. v_ddl_commands.COUNT LOOP
         DBMS_OUTPUT.PUT_LINE(v_ddl_commands(i));
     END LOOP;
     DBMS_OUTPUT.PUT_LINE('--------------------> ДДЛ КОМАНДЫ <--------------------');
-    
+
+    DBMS_OUTPUT.PUT_LINE('');
 END;
 
 
@@ -475,6 +482,60 @@ BEGIN
         DBMS_OUTPUT.PUT_LINE('Отличий в индексах между DEV_SCHEMA и PROD_SCHEMA не обнаружено.');
     END IF;
 END compare_indexes;
+
+
+
+CREATE OR REPLACE PROCEDURE compare_packages(
+    dev_schema_name IN VARCHAR2,
+    prod_schema_name IN VARCHAR2,
+    ddl_commands IN OUT CLOB_LIST
+) IS
+    v_has_package_differences BOOLEAN := FALSE;
+BEGIN
+    FOR r_package IN (
+        SELECT OBJECT_NAME
+        FROM ALL_OBJECTS
+        WHERE OWNER = dev_schema_name
+          AND OBJECT_TYPE = 'PACKAGE'
+          AND OBJECT_NAME NOT IN (
+              SELECT OBJECT_NAME
+              FROM ALL_OBJECTS
+              WHERE OWNER = prod_schema_name
+                AND OBJECT_TYPE = 'PACKAGE'
+          )
+    ) LOOP
+        IF NOT v_has_package_differences THEN
+            v_has_package_differences := TRUE;
+        END IF;
+        DBMS_OUTPUT.PUT_LINE('Пакет ' || r_package.OBJECT_NAME || ' есть в DEV_SCHEMA, но отсутствует в PROD_SCHEMA.');
+        ddl_commands.EXTEND;
+        ddl_commands(ddl_commands.COUNT) := 'CREATE OR REPLACE PACKAGE ' || prod_schema_name || '.' || r_package.OBJECT_NAME || ' AS <код_пакета>;';
+    END LOOP;
+
+    FOR r_package IN (
+        SELECT OBJECT_NAME
+        FROM ALL_OBJECTS
+        WHERE OWNER = prod_schema_name
+          AND OBJECT_TYPE = 'PACKAGE'
+          AND OBJECT_NAME NOT IN (
+              SELECT OBJECT_NAME
+              FROM ALL_OBJECTS
+              WHERE OWNER = dev_schema_name
+                AND OBJECT_TYPE = 'PACKAGE'
+          )
+    ) LOOP
+        IF NOT v_has_package_differences THEN
+            v_has_package_differences := TRUE;
+        END IF;
+        DBMS_OUTPUT.PUT_LINE('Пакет ' || r_package.OBJECT_NAME || ' есть в PROD_SCHEMA, но отсутствует в DEV_SCHEMA.');
+        ddl_commands.EXTEND;
+        ddl_commands(ddl_commands.COUNT) := 'DROP PACKAGE ' || prod_schema_name || '.' || r_package.OBJECT_NAME || ';';
+    END LOOP;
+
+    IF NOT v_has_package_differences THEN
+        DBMS_OUTPUT.PUT_LINE('Отличий в пакетах между DEV_SCHEMA и PROD_SCHEMA не обнаружено.');
+    END IF;
+END compare_packages;
 
 
 
