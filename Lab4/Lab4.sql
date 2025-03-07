@@ -140,6 +140,35 @@ BEGIN
                 END LOOP;
             END IF;
 
+        WHEN 'CREATE_TABLE' THEN
+            v_sql_query := 'CREATE TABLE ' || v_table_name || ' (';
+
+            FOR r IN (
+                SELECT jc.name, jc.type, jc.constraints
+                FROM JSON_TABLE(
+                    v_columns,
+                    '$[*]'
+                    COLUMNS (
+                        name VARCHAR2(100) PATH '$.name',
+                        type VARCHAR2(100) PATH '$.type',
+                        constraints VARCHAR2(200) PATH '$.constraints'
+                    )
+                ) jc
+            LOOP
+                v_sql_query := v_sql_query || jc.name || ' ' || jc.type;
+
+                IF jc.constraints IS NOT NULL THEN
+                    v_sql_query := v_sql_query || ' ' || jc.constraints;
+                END IF;
+
+                v_sql_query := v_sql_query || ', ';
+            END LOOP;
+
+            v_sql_query := RTRIM(v_sql_query, ', ') || ')';
+
+        WHEN 'DROP_TABLE' THEN
+            v_sql_query := 'DROP TABLE ' || v_table_name;
+
         ELSE
             RAISE_APPLICATION_ERROR(-20001, 'Unsupported query type: ' || v_query_type);
     END CASE;
@@ -354,4 +383,52 @@ BEGIN
     v_cursor := generate_sql_from_json(v_json_data);
 
     DBMS_OUTPUT.PUT_LINE('Row inserted successfully.');
+END;
+
+DECLARE
+    v_json_data CLOB;
+    v_cursor SYS_REFCURSOR;
+BEGIN
+    v_json_data := '{
+        "queryType": "CREATE_TABLE",
+        "tableName": "employees",
+        "columns": [
+            {
+                "name": "employee_id",
+                "type": "NUMBER",
+                "constraints": ["PRIMARY KEY"]
+            },
+            {
+                "name": "first_name",
+                "type": "VARCHAR2(100)"
+            },
+            {
+                "name": "last_name",
+                "type": "VARCHAR2(100)"
+            },
+            {
+                "name": "department_id",
+                "type": "NUMBER",
+                "constraints": ["REFERENCES departments(department_id)"]
+            }
+        ]
+    }';
+
+    v_cursor := generate_sql_from_json(v_json_data);
+
+    DBMS_OUTPUT.PUT_LINE('Table created successfully.');
+END;
+
+DECLARE
+    v_json_data CLOB;
+    v_cursor SYS_REFCURSOR;
+BEGIN
+    v_json_data := '{
+        "queryType": "DROP_TABLE",
+        "tableName": "employees"
+    }';
+
+    v_cursor := generate_sql_from_json(v_json_data);
+
+    DBMS_OUTPUT.PUT_LINE('Table dropped successfully.');
 END;
