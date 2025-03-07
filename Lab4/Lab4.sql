@@ -1,8 +1,9 @@
 CREATE OR REPLACE FUNCTION generate_sql_from_json(json_data IN CLOB) RETURN SYS_REFCURSOR IS
     v_query_type VARCHAR2(50);
+    v_table      VARCHAR2(100);
     v_columns    VARCHAR2(1000);
-    v_tables     VARCHAR2(1000);
-    v_joins      VARCHAR2(1000);
+    v_values     VARCHAR2(1000);
+    v_set        VARCHAR2(1000);
     v_filters    VARCHAR2(1000);
     v_order_by   VARCHAR2(1000);
 
@@ -20,71 +21,128 @@ CREATE OR REPLACE FUNCTION generate_sql_from_json(json_data IN CLOB) RETURN SYS_
 BEGIN
     SELECT 
         JSON_VALUE(json_data, '$.queryType'),
+        JSON_VALUE(json_data, '$.table'),
         JSON_QUERY(json_data, '$.columns' WITH ARRAY WRAPPER),
-        JSON_VALUE(json_data, '$.tables[0]'),
-        JSON_QUERY(json_data, '$.joins' WITH ARRAY WRAPPER),
+        JSON_QUERY(json_data, '$.values' WITH ARRAY WRAPPER),
+        JSON_QUERY(json_data, '$.set' WITH ARRAY WRAPPER),
         JSON_QUERY(json_data, '$.filters' WITH ARRAY WRAPPER),
         JSON_QUERY(json_data, '$.orderBy' WITH ARRAY WRAPPER)
     INTO
         v_query_type,
+        v_table,
         v_columns,
-        v_tables,
-        v_joins,
+        v_values,
+        v_set,
         v_filters,
         v_order_by
     FROM DUAL;
 
-    IF v_query_type = 'SELECT' THEN
-        v_columns := REPLACE(REPLACE(v_columns, '[', ''), ']', '');
-        v_joins := REPLACE(REPLACE(v_joins, '[', ''), ']', '');
-        v_filters := REPLACE(REPLACE(v_filters, '[', ''), ']', '');
-        v_order_by := REPLACE(REPLACE(v_order_by, '[', ''), ']', '');
+    CASE v_query_type
+        WHEN 'SELECT' THEN
+            v_sql_query := 'SELECT ' || v_columns || ' FROM ' || v_table;
 
-        v_sql_query := 'SELECT ' || v_columns || ' FROM ' || v_tables;
+            IF v_filters IS NOT NULL THEN
+                FOR f IN (
+                    SELECT jf.column, jf.operator, jf.value, jf.subquery
+                    FROM JSON_TABLE(
+                        v_filters,
+                        '$[*]'
+                        COLUMNS (
+                            column VARCHAR2(100) PATH '$.column',
+                            operator VARCHAR2(20) PATH '$.operator',
+                            value VARCHAR2(200) PATH '$.value',
+                            subquery CLOB PATH '$.subquery'
+                        )
+                    ) jf
+                LOOP
+                    IF f.subquery IS NOT NULL THEN
+                        v_sql_query := v_sql_query || ' ' || f.column || ' ' || f.operator || ' (' || generate_subquery(f.subquery) || ')';
+                    ELSE
+                        v_sql_query := v_sql_query || ' ' || f.column || ' ' || f.operator || ' ' || f.value;
+                    END IF;
+                END LOOP;
+            END IF;
 
-        IF v_joins IS NOT NULL THEN
+            IF v_order_by IS NOT NULL THEN
+                v_sql_query := v_sql_query || ' ORDER BY ' || v_order_by;
+            END IF;
+
+        WHEN 'INSERT' THEN
+            v_sql_query := 'INSERT INTO ' || v_table || ' (' || v_columns || ') VALUES (';
+
             FOR r IN (
-                SELECT jt.type, jt.table, jt.on
+                SELECT jv.key, jv.value
                 FROM JSON_TABLE(
-                    v_joins,
+                    v_values,
                     '$[*]'
                     COLUMNS (
-                        type VARCHAR2(20) PATH '$.type',
-                        table VARCHAR2(50) PATH '$.table',
-                        on VARCHAR2(200) PATH '$.on'
+                        key VARCHAR2(100) PATH '$.key',
+                        value VARCHAR2(200) PATH '$.value'
                     )
-                ) jt
+                ) jv
             LOOP
-                v_sql_query := v_sql_query || ' ' || r.type || ' JOIN ' || r.table || ' ON ' || r.on;
-            END LOOP;
-        END IF;
-
-        IF v_filters IS NOT NULL THEN
-            FOR f IN (
-                SELECT jf.column, jf.operator, jf.value, jf.subquery
-                FROM JSON_TABLE(
-                    v_filters,
-                    '$[*]'
-                    COLUMNS (
-                        column VARCHAR2(100) PATH '$.column',
-                        operator VARCHAR2(20) PATH '$.operator',
-                        value VARCHAR2(200) PATH '$.value',
-                        subquery CLOB PATH '$.subquery'
-                    )
-                ) jf
-            LOOP
-                IF f.subquery IS NOT NULL THEN
-                    v_sql_query := v_sql_query || ' ' || f.column || ' ' || f.operator || ' (' || generate_subquery(f.subquery) || ')';
+                IF JSON_EXISTS(jv.value, '$.subquery') THEN
+                    v_sql_query := v_sql_query || '(' || generate_subquery(jv.value) || ')';
                 ELSE
-                    v_sql_query := v_sql_query || ' ' || f.column || ' ' || f.operator || ' ' || f.value;
+                    v_sql_query := v_sql_query || jv.value;
                 END IF;
             END LOOP;
-        END IF;
 
-        IF v_order_by IS NOT NULL THEN
-            v_sql_query := v_sql_query || ' ORDER BY ' || v_order_by;
-        END IF;
-    END IF;
+            v_sql_query := v_sql_query || ')';
+
+        WHEN 'UPDATE' THEN
+            v_sql_query := 'UPDATE ' || v_table || ' SET ' || v_set;
+
+            IF v_filters IS NOT NULL THEN
+                FOR f IN (
+                    SELECT jf.column, jf.operator, jf.value, jf.subquery
+                    FROM JSON_TABLE(
+                        v_filters,
+                        '$[*]'
+                        COLUMNS (
+                            column VARCHAR2(100) PATH '$.column',
+                            operator VARCHAR2(20) PATH '$.operator',
+                            value VARCHAR2(200) PATH '$.value',
+                            subquery CLOB PATH '$.subquery'
+                        )
+                    ) jf
+                LOOP
+                    IF f.subquery IS NOT NULL THEN
+                        v_sql_query := v_sql_query || ' ' || f.column || ' ' || f.operator || ' (' || generate_subquery(f.subquery) || ')';
+                    ELSE
+                        v_sql_query := v_sql_query || ' ' || f.column || ' ' || f.operator || ' ' || f.value;
+                    END IF;
+                END LOOP;
+            END IF;
+
+        WHEN 'DELETE' THEN
+            v_sql_query := 'DELETE FROM ' || v_table;
+
+            IF v_filters IS NOT NULL THEN
+                FOR f IN (
+                    SELECT jf.column, jf.operator, jf.value, jf.subquery
+                    FROM JSON_TABLE(
+                        v_filters,
+                        '$[*]'
+                        COLUMNS (
+                            column VARCHAR2(100) PATH '$.column',
+                            operator VARCHAR2(20) PATH '$.operator',
+                            value VARCHAR2(200) PATH '$.value',
+                            subquery CLOB PATH '$.subquery'
+                        )
+                    ) jf
+                LOOP
+                    IF f.subquery IS NOT NULL THEN
+                        v_sql_query := v_sql_query || ' ' || f.column || ' ' || f.operator || ' (' || generate_subquery(f.subquery) || ')';
+                    ELSE
+                        v_sql_query := v_sql_query || ' ' || f.column || ' ' || f.operator || ' ' || f.value;
+                    END IF;
+                END LOOP;
+            END IF;
+
+        ELSE
+            RAISE_APPLICATION_ERROR(-20001, 'Unsupported query type: ' || v_query_type);
+    END CASE;
 
     OPEN v_cursor FOR v_sql_query;
 
@@ -194,4 +252,106 @@ BEGIN
     END LOOP;
 
     CLOSE v_cursor;
+END;
+
+DECLARE
+    v_json_data CLOB;
+    v_cursor SYS_REFCURSOR;
+BEGIN
+    v_json_data := '{
+        "queryType": "UPDATE",
+        "table": "employees",
+        "set": {
+            "first_name": "Robert"
+        },
+        "filters": [
+            {
+                "column": "department_id",
+                "operator": "IN",
+                "subquery": {
+                    "queryType": "SELECT",
+                    "columns": ["department_id"],
+                    "tables": ["departments"],
+                    "filters": [
+                        {
+                            "column": "location_id",
+                            "operator": "=",
+                            "value": 1
+                        }
+                    ]
+                }
+            }
+        ]
+    }';
+
+    v_cursor := generate_sql_from_json(v_json_data);
+
+    DBMS_OUTPUT.PUT_LINE('Rows updated successfully.');
+END;
+
+
+DECLARE
+    v_json_data CLOB;
+    v_cursor SYS_REFCURSOR;
+BEGIN
+    v_json_data := '{
+        "queryType": "DELETE",
+        "table": "employees",
+        "filters": [
+            {
+                "column": "department_id",
+                "operator": "IN",
+                "subquery": {
+                    "queryType": "SELECT",
+                    "columns": ["department_id"],
+                    "tables": ["departments"],
+                    "filters": [
+                        {
+                            "column": "location_id",
+                            "operator": "=",
+                            "value": 1
+                        }
+                    ]
+                }
+            }
+        ]
+    }';
+
+    v_cursor := generate_sql_from_json(v_json_data);
+
+    DBMS_OUTPUT.PUT_LINE('Rows deleted successfully.');
+END;
+
+DECLARE
+    v_json_data CLOB;
+    v_cursor SYS_REFCURSOR;
+BEGIN
+    v_json_data := '{
+        "queryType": "INSERT",
+        "table": "employees",
+        "columns": ["employee_id", "first_name", "last_name", "department_id"],
+        "values": {
+            "employee_id": 5,
+            "first_name": "Alice",
+            "last_name": "Brown",
+            "department_id": {
+                "subquery": {
+                    "queryType": "SELECT",
+                    "columns": ["department_id"],
+                    "tables": ["departments"],
+                    "filters": [
+                        {
+                            "column": "location_id",
+                            "operator": "=",
+                            "value": 1
+                        }
+                    ]
+                }
+            }
+        }
+    }';
+
+    v_cursor := generate_sql_from_json(v_json_data);
+
+    DBMS_OUTPUT.PUT_LINE('Row inserted successfully.');
 END;
