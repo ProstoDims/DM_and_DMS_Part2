@@ -9,6 +9,14 @@ CREATE OR REPLACE FUNCTION generate_sql_from_json(json_data IN CLOB) RETURN SYS_
     v_sql_query VARCHAR2(4000);
 
     v_cursor SYS_REFCURSOR;
+
+    FUNCTION generate_subquery(subquery_data IN CLOB) RETURN VARCHAR2 IS
+        v_subquery CLOB;
+    BEGIN
+        v_subquery := generate_sql_from_json(subquery_data);
+        RETURN v_subquery;
+    END;
+
 BEGIN
     SELECT 
         JSON_VALUE(json_data, '$.queryType'),
@@ -52,7 +60,25 @@ BEGIN
         END IF;
 
         IF v_filters IS NOT NULL THEN
-            v_sql_query := v_sql_query || ' WHERE ' || v_filters;
+            FOR f IN (
+                SELECT jf.column, jf.operator, jf.value, jf.subquery
+                FROM JSON_TABLE(
+                    v_filters,
+                    '$[*]'
+                    COLUMNS (
+                        column VARCHAR2(100) PATH '$.column',
+                        operator VARCHAR2(20) PATH '$.operator',
+                        value VARCHAR2(200) PATH '$.value',
+                        subquery CLOB PATH '$.subquery'
+                    )
+                ) jf
+            LOOP
+                IF f.subquery IS NOT NULL THEN
+                    v_sql_query := v_sql_query || ' ' || f.column || ' ' || f.operator || ' (' || generate_subquery(f.subquery) || ')';
+                ELSE
+                    v_sql_query := v_sql_query || ' ' || f.column || ' ' || f.operator || ' ' || f.value;
+                END IF;
+            END LOOP;
         END IF;
 
         IF v_order_by IS NOT NULL THEN
@@ -64,6 +90,7 @@ BEGIN
 
     RETURN v_cursor;
 END;
+
 
 DECLARE
     v_json_data CLOB;
@@ -115,6 +142,54 @@ BEGIN
             'First Name: ' || v_first_name || ', ' ||
             'Department: ' || v_department_name || ', ' ||
             'City: ' || v_city
+        );
+    END LOOP;
+
+    CLOSE v_cursor;
+END;
+
+
+DECLARE
+    v_json_data CLOB;
+    v_cursor SYS_REFCURSOR;
+    v_employee_id employees.employee_id%TYPE;
+    v_first_name employees.first_name%TYPE;
+    v_department_name departments.department_name%TYPE;
+    v_city locations.city%TYPE;
+BEGIN
+    v_json_data := '{
+        "queryType": "SELECT",
+        "columns": ["employees.employee_id", "employees.first_name"],
+        "tables": ["employees"],
+        "filters": [
+            {
+                "column": "employees.department_id",
+                "operator": "IN",
+                "subquery": {
+                    "queryType": "SELECT",
+                    "columns": ["department_id"],
+                    "tables": ["departments"],
+                    "filters": [
+                        {
+                            "column": "departments.location_id",
+                            "operator": "=",
+                            "value": 1
+                        }
+                    ]
+                }
+            }
+        ]
+    }';
+
+    v_cursor := generate_sql_from_json(v_json_data);
+
+    LOOP
+        FETCH v_cursor INTO v_employee_id, v_first_name;
+        EXIT WHEN v_cursor%NOTFOUND;
+
+        DBMS_OUTPUT.PUT_LINE(
+            'Employee ID: ' || v_employee_id || ', ' ||
+            'First Name: ' || v_first_name
         );
     END LOOP;
 
