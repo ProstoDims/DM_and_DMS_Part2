@@ -1,13 +1,15 @@
 CREATE OR REPLACE FUNCTION generate_sql_from_json(json_data IN CLOB) RETURN SYS_REFCURSOR IS
-    v_query_type VARCHAR2(50);
-    v_table      VARCHAR2(100);
-    v_columns    VARCHAR2(1000);
-    v_values     VARCHAR2(1000);
-    v_set        VARCHAR2(1000);
-    v_filters    VARCHAR2(1000);
-    v_order_by   VARCHAR2(1000);
-
-    v_sql_query VARCHAR2(4000);
+    v_query_type       VARCHAR2(50);
+    v_table_name       VARCHAR2(100);
+    v_columns          VARCHAR2(1000);
+    v_values           VARCHAR2(1000);
+    v_set              VARCHAR2(1000);
+    v_filters          VARCHAR2(1000);
+    v_order_by         VARCHAR2(1000);
+    v_primary_key_col  VARCHAR2(100);
+    v_sequence_name    VARCHAR2(100);
+    v_trigger_name     VARCHAR2(100);
+    v_sql_query        VARCHAR2(4000);
 
     v_cursor SYS_REFCURSOR;
 
@@ -21,7 +23,7 @@ CREATE OR REPLACE FUNCTION generate_sql_from_json(json_data IN CLOB) RETURN SYS_
 BEGIN
     SELECT 
         JSON_VALUE(json_data, '$.queryType'),
-        JSON_VALUE(json_data, '$.table'),
+        JSON_VALUE(json_data, '$.tableName'),
         JSON_QUERY(json_data, '$.columns' WITH ARRAY WRAPPER),
         JSON_QUERY(json_data, '$.values' WITH ARRAY WRAPPER),
         JSON_QUERY(json_data, '$.set' WITH ARRAY WRAPPER),
@@ -29,7 +31,7 @@ BEGIN
         JSON_QUERY(json_data, '$.orderBy' WITH ARRAY WRAPPER)
     INTO
         v_query_type,
-        v_table,
+        v_table_name,
         v_columns,
         v_values,
         v_set,
@@ -39,7 +41,7 @@ BEGIN
 
     CASE v_query_type
         WHEN 'SELECT' THEN
-            v_sql_query := 'SELECT ' || v_columns || ' FROM ' || v_table;
+            v_sql_query := 'SELECT ' || v_columns || ' FROM ' || v_table_name;
 
             IF v_filters IS NOT NULL THEN
                 FOR f IN (
@@ -68,7 +70,7 @@ BEGIN
             END IF;
 
         WHEN 'INSERT' THEN
-            v_sql_query := 'INSERT INTO ' || v_table || ' (' || v_columns || ') VALUES (';
+            v_sql_query := 'INSERT INTO ' || v_table_name || ' (' || v_columns || ') VALUES (';
 
             FOR r IN (
                 SELECT jv.key, jv.value
@@ -91,7 +93,7 @@ BEGIN
             v_sql_query := v_sql_query || ')';
 
         WHEN 'UPDATE' THEN
-            v_sql_query := 'UPDATE ' || v_table || ' SET ' || v_set;
+            v_sql_query := 'UPDATE ' || v_table_name || ' SET ' || v_set;
 
             IF v_filters IS NOT NULL THEN
                 FOR f IN (
@@ -116,7 +118,7 @@ BEGIN
             END IF;
 
         WHEN 'DELETE' THEN
-            v_sql_query := 'DELETE FROM ' || v_table;
+            v_sql_query := 'DELETE FROM ' || v_table_name;
 
             IF v_filters IS NOT NULL THEN
                 FOR f IN (
@@ -161,10 +163,30 @@ BEGIN
                     v_sql_query := v_sql_query || ' ' || jc.constraints;
                 END IF;
 
+                IF jc.constraints LIKE '%PRIMARY KEY%' THEN
+                    v_primary_key_col := jc.name;
+                END IF;
+
                 v_sql_query := v_sql_query || ', ';
             END LOOP;
 
-            v_sql_query := RTRIM(v_sql_query, ', ') || ')';
+            v_sql_query := RTRIM(v_sql_query, ', ') || ');';
+
+            IF v_primary_key_col IS NOT NULL THEN
+                v_sequence_name := v_table_name || '_seq';
+                v_trigger_name := v_table_name || '_before_insert';
+
+                v_sql_query := v_sql_query || ' CREATE SEQUENCE ' || v_sequence_name || ' START WITH 1 INCREMENT BY 1;';
+
+                v_sql_query := v_sql_query || ' CREATE OR REPLACE TRIGGER ' || v_trigger_name || 
+                               ' BEFORE INSERT ON ' || v_table_name || 
+                               ' FOR EACH ROW ' ||
+                               ' BEGIN ' ||
+                               '   IF :NEW.' || v_primary_key_col || ' IS NULL THEN ' ||
+                               '     SELECT ' || v_sequence_name || '.NEXTVAL INTO :NEW.' || v_primary_key_col || ' FROM DUAL; ' ||
+                               '   END IF; ' ||
+                               ' END;';
+            END IF;
 
         WHEN 'DROP_TABLE' THEN
             v_sql_query := 'DROP TABLE ' || v_table_name;
@@ -431,4 +453,39 @@ BEGIN
     v_cursor := generate_sql_from_json(v_json_data);
 
     DBMS_OUTPUT.PUT_LINE('Table dropped successfully.');
+END;
+
+
+DECLARE
+    v_json_data CLOB;
+    v_cursor SYS_REFCURSOR;
+BEGIN
+    v_json_data := '{
+        "queryType": "CREATE_TABLE",
+        "tableName": "employees",
+        "columns": [
+            {
+                "name": "employee_id",
+                "type": "NUMBER",
+                "constraints": ["PRIMARY KEY"]
+            },
+            {
+                "name": "first_name",
+                "type": "VARCHAR2(100)"
+            },
+            {
+                "name": "last_name",
+                "type": "VARCHAR2(100)"
+            },
+            {
+                "name": "department_id",
+                "type": "NUMBER",
+                "constraints": ["REFERENCES departments(department_id)"]
+            }
+        ]
+    }';
+
+    v_cursor := generate_sql_from_json(v_json_data);
+
+    DBMS_OUTPUT.PUT_LINE('Table and trigger created successfully.');
 END;
