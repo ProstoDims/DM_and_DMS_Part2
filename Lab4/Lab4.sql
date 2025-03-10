@@ -5,6 +5,7 @@ CREATE OR REPLACE FUNCTION build_dynamic_select_query(json_data IN CLOB) RETURN 
     v_joins        JSON_ARRAY_T;
     v_filters      JSON_ARRAY_T;
     v_orders       JSON_ARRAY_T;
+    v_group_by     JSON_ARRAY_T;
     v_result       CLOB;
     v_temp         VARCHAR2(4000);
     v_operator     VARCHAR2(20);
@@ -89,6 +90,20 @@ BEGIN
         END IF;
     END IF;
 
+    v_temp := JSON_QUERY(json_data, '$.groupBy' RETURNING CLOB);
+    IF v_temp IS NOT NULL AND v_temp != '[]' THEN
+        v_group_by := JSON_ARRAY_T(v_temp);
+        IF v_group_by.get_size > 0 THEN
+            v_result := v_result || CHR(10) || 'GROUP BY ';
+            FOR i IN 0 .. v_group_by.get_size - 1 LOOP
+                IF i > 0 THEN
+                    v_result := v_result || ', ';
+                END IF;
+                v_result := v_result || v_group_by.get_string(i);
+            END LOOP;
+        END IF;
+    END IF;
+
     v_temp := JSON_QUERY(json_data, '$.orderBy' RETURNING CLOB);
     IF v_temp IS NOT NULL AND v_temp != '[]' THEN
         v_orders := JSON_ARRAY_T(v_temp);
@@ -114,7 +129,6 @@ CREATE OR REPLACE FUNCTION get_dynamic_cursor_select(json_data IN CLOB) RETURN S
     v_cursor SYS_REFCURSOR;
 BEGIN
     v_query := build_dynamic_select_query(json_data);
-    DBMS_OUTPUT.PUT_LINE(v_query);
     OPEN v_cursor FOR v_query;
     RETURN v_cursor;
 END;
@@ -234,7 +248,6 @@ CREATE OR REPLACE FUNCTION execute_dynamic_dml_query(query IN CLOB) RETURN VARCH
 RESULT CLOB;
 BEGIN
     result := BUILD_DYNAMIC_DML_QUERY(query);
-    DBMS_OUTPUT.PUT_LINE(result);
     EXECUTE IMMEDIATE result;
     COMMIT;
     RETURN 'DML query executed successfully';
@@ -272,10 +285,11 @@ BEGIN
             END IF;
             v_ddl_query := v_ddl_query || v_temp;
         END LOOP;
-        v_ddl_query := v_ddl_query || ');';
+        v_ddl_query := v_ddl_query || ')';
 
+        v_ddl_query := v_ddl_query || CHR(10);
         IF v_primary_key IS NOT NULL THEN
-            v_trigger_sql := 'CREATE SEQUENCE ' || v_table_name || '_seq START WITH 1 INCREMENT BY 1;' || CHR(10) ||
+            v_trigger_sql := 'CREATE SEQUENCE ' || v_table_name || '_seq START WITH 1 INCREMENT BY 1' || CHR(10) || CHR(10) ||
                              'CREATE OR REPLACE TRIGGER ' || v_table_name || '_trg ' || CHR(10) ||
                              'BEFORE INSERT ON ' || v_table_name || ' ' || CHR(10) ||
                              'FOR EACH ROW ' || CHR(10) ||
@@ -289,21 +303,47 @@ BEGIN
         v_result := v_ddl_query || CHR(10) || v_trigger_sql;
 
     ELSIF v_ddl_type = 'DROP' THEN
-        v_result := 'DROP TABLE ' || v_table_name || ';' || CHR(10) ||
-                    'DROP SEQUENCE ' || v_table_name || '_seq;';
+        v_result := 'DROP TABLE ' || v_table_name || CHR(10) || CHR(10) ||
+                    'DROP SEQUENCE ' || v_table_name || '_seq';
+    ELSE
+        RAISE_APPLICATION_ERROR(-20001, 'Unsupported DDL type: ' || v_ddl_type);
     END IF;
 
     RETURN v_result;
 END;
 /
 
+
 CREATE OR REPLACE FUNCTION execute_dynamic_ddl_query(query IN CLOB) RETURN VARCHAR2 IS
-RESULT CLOB;
+    result CLOB;
+    v_sql_part VARCHAR2(4000);
+    v_pos_start PLS_INTEGER := 1;
+    v_pos_end PLS_INTEGER;
 BEGIN
-    RESULT := GENERATE_DDL_AND_TRIGGER(query);
-    DBMS_OUTPUT.PUT_LINE(result);
-    EXECUTE IMMEDIATE RESULT;
-    COMMIT;
+    result := generate_ddl_and_trigger(query);
+    LOOP
+        v_pos_end := INSTR(result, CHR(10) || CHR(10), v_pos_start);
+
+        IF v_pos_end = 0 THEN
+            v_sql_part := SUBSTR(result, v_pos_start);
+        ELSE
+            v_sql_part := SUBSTR(result, v_pos_start, v_pos_end - v_pos_start);
+        END IF;
+
+        v_sql_part := TRIM(v_sql_part);
+
+        IF v_sql_part IS NOT NULL THEN
+            BEGIN
+                EXECUTE IMMEDIATE v_sql_part;
+                COMMIT;
+            END;
+        END IF;
+
+        EXIT WHEN v_pos_end = 0;
+
+        v_pos_start := v_pos_end + 2;
+    END LOOP;
+
     RETURN 'DDL query executed successfully';
 EXCEPTION
     WHEN OTHERS THEN
@@ -373,6 +413,51 @@ BEGIN
 END;
 /
 
+DECLARE
+    result CLOB;
+    v_json    CLOB;
+    v_cursor  SYS_REFCURSOR;
+    v_department_id departments.department_id%TYPE;
+    v_employee_count NUMBER;
+BEGIN
+    v_json := '{
+        "queryType": "SELECT",
+        "columns": ["employees.department_id", "COUNT(employees.employee_id) AS employee_count"],
+        "tables": ["employees"],
+        "joins": [
+            {
+                "type": "INNER",
+                "table": "departments",
+                "on": "employees.department_id = departments.department_id"
+            }
+        ],
+        "filters": [
+            {
+                "column": "employees.salary",
+                "operator": ">",
+                "value": "5000"
+            }
+        ],
+        "groupBy": ["employees.department_id"],
+        "orderBy": [
+            {
+                "column": "employee_count",
+                "direction": "DESC"
+            }
+        ]
+    }';
+
+    v_cursor := get_dynamic_cursor_select(v_json);
+
+    LOOP
+        FETCH v_cursor INTO v_department_id, v_employee_count;
+        EXIT WHEN v_cursor%NOTFOUND;
+        DBMS_OUTPUT.PUT_LINE('Department ID: ' || v_department_id || ', Employee Count: ' || v_employee_count);
+    END LOOP;
+
+    CLOSE v_cursor;
+END;
+/
 
 DECLARE
     v_json CLOB;
@@ -382,7 +467,7 @@ BEGIN
         "queryType": "INSERT",
         "table": "employees",
         "columns": ["employee_id", "first_name", "last_name", "department_id", "salary"],
-        "values": ["7", "''John''", "''Doe''", "10","10000"]
+        "values": ["10", "''John''", "''Doe''", "10","1000"]
     }';
     
     v_query := EXECUTE_DYNAMIC_DML_QUERY(v_json);
@@ -400,11 +485,11 @@ BEGIN
         "queryType": "UPDATE",
         "table": "employees",
         "set": [
-            {"column": "first_name", "value": "Jane"},
-            {"column": "last_name", "value": "Smith"}
+            {"column": "first_name", "value": "''Jane''"},
+            {"column": "last_name", "value": "''Smith''"}
         ],
         "filters": [
-            {"column": "employee_id", "operator": "=", "value": "101"}
+            {"column": "employee_id", "operator": "=", "value": "10"}
         ]
     }';
     
@@ -422,7 +507,7 @@ BEGIN
         "queryType": "DELETE",
         "table": "employees",
         "filters": [
-            {"column": "employee_id", "operator": "=", "value": "101"}
+            {"column": "employee_id", "operator": "=", "value": "10"}
         ]
     }';
     
@@ -434,11 +519,11 @@ END;
 
 DECLARE
     v_json       CLOB;
-    v_sql_script CLOB;
+    v_result     VARCHAR2(4000);
 BEGIN
     v_json := '{
         "ddlType": "CREATE",
-        "tableName": "employees",
+        "tableName": "employees1",
         "columns": [
             {"name": "employee_id", "type": "NUMBER", "primaryKey": "true"},
             {"name": "first_name", "type": "VARCHAR2(100)"},
@@ -447,23 +532,25 @@ BEGIN
         ]
     }';
 
-    v_sql_script := EXECUTE_DYNAMIC_DDL_QUERY(v_json);
-    DBMS_OUTPUT.PUT_LINE(v_sql_script);
-
+    v_result := execute_dynamic_ddl_query(v_json);
+    DBMS_OUTPUT.PUT_LINE(v_result);
 END;
 /
 
 DECLARE
     v_json       CLOB;
-    v_sql_script CLOB;
+    v_result     VARCHAR2(4000);
 BEGIN
     v_json := '{
         "ddlType": "DROP",
-        "tableName": "employees"
+        "tableName": "employees1"
     }';
 
-    v_sql_script := EXECUTE_DYNAMIC_DDL_QUERY(v_json);
-    DBMS_OUTPUT.PUT_LINE(v_sql_script);
-
+    v_result := execute_dynamic_ddl_query(v_json);
+    DBMS_OUTPUT.PUT_LINE(v_result);
 END;
 /
+
+
+GRANT CREATE SEQUENCE TO SYSTEM;
+GRANT CREATE TRIGGER TO SYSTEM;
