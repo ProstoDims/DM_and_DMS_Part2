@@ -262,6 +262,7 @@ CREATE OR REPLACE FUNCTION generate_ddl_and_trigger(json_data IN CLOB) RETURN CL
     v_table_name  VARCHAR2(100);
     v_columns     JSON_ARRAY_T;
     v_primary_key VARCHAR2(100);
+    v_foreign_keys JSON_ARRAY_T;
     v_ddl_query   CLOB;
     v_trigger_sql CLOB;
     v_temp        VARCHAR2(4000);
@@ -273,18 +274,28 @@ BEGIN
     IF v_ddl_type = 'CREATE' THEN
         v_columns := JSON_ARRAY_T(JSON_QUERY(json_data, '$.columns' RETURNING CLOB));
         v_ddl_query := 'CREATE TABLE ' || v_table_name || ' (';
+
         FOR i IN 0 .. v_columns.get_size - 1 LOOP
             IF i > 0 THEN
                 v_ddl_query := v_ddl_query || ', ';
             END IF;
             v_temp := JSON_VALUE(v_columns.get(i).to_string(), '$.name') || ' ' ||
                       JSON_VALUE(v_columns.get(i).to_string(), '$.type');
+
             IF JSON_VALUE(v_columns.get(i).to_string(), '$.primaryKey') = 'true' THEN
                 v_temp := v_temp || ' PRIMARY KEY';
                 v_primary_key := JSON_VALUE(v_columns.get(i).to_string(), '$.name');
             END IF;
+
+            IF JSON_EXISTS(v_columns.get(i).to_string(), '$.foreignKey') THEN
+                v_temp := v_temp || ' REFERENCES ' ||
+                          JSON_VALUE(v_columns.get(i).to_string(), '$.foreignKey.table') || ' (' ||
+                          JSON_VALUE(v_columns.get(i).to_string(), '$.foreignKey.column') || ')';
+            END IF;
+
             v_ddl_query := v_ddl_query || v_temp;
         END LOOP;
+
         v_ddl_query := v_ddl_query || ')';
 
         v_ddl_query := v_ddl_query || CHR(10);
@@ -529,6 +540,26 @@ BEGIN
             {"name": "first_name", "type": "VARCHAR2(100)"},
             {"name": "last_name", "type": "VARCHAR2(100)"},
             {"name": "department_id", "type": "NUMBER"}
+        ]
+    }';
+
+    v_result := execute_dynamic_ddl_query(v_json);
+    DBMS_OUTPUT.PUT_LINE(v_result);
+END;
+/
+
+DECLARE
+    v_json       CLOB;
+    v_result     VARCHAR2(4000);
+BEGIN
+    v_json := '{
+        "ddlType": "CREATE",
+        "tableName": "employees2",
+        "columns": [
+            {"name": "employee2_id", "type": "NUMBER", "primaryKey": "true"},
+            {"name": "first_name", "type": "VARCHAR2(100)"},
+            {"name": "last_name", "type": "VARCHAR2(100)"},
+            {"name": "employee_id", "type": "NUMBER", "foreignKey": {"table": "employees1", "column": "employee_id"}}
         ]
     }';
 
