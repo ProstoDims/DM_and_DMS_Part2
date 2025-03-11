@@ -1,50 +1,75 @@
 CREATE OR REPLACE TRIGGER trg_update_group_students_count
-AFTER INSERT OR UPDATE OR DELETE ON students
-FOR EACH ROW
-BEGIN
-    UPDATE groups
-    SET students_count = (
-        SELECT COUNT(*)
-        FROM students
-        WHERE group_id = COALESCE(:NEW.group_id, :OLD.group_id)
-    )
-    WHERE id = COALESCE(:NEW.group_id, :OLD.group_id);
-END;
-/
+FOR INSERT OR UPDATE OR DELETE ON students
+COMPOUND TRIGGER
+    v_group_id NUMBER;
 
-CREATE OR REPLACE TRIGGER trg_update_faculty_students_count
-AFTER INSERT OR UPDATE OR DELETE ON students
-FOR EACH ROW
-BEGIN
-    UPDATE faculties
-    SET students_count = (
-        SELECT COUNT(s.id)
-        FROM students s
-        JOIN groups g ON s.group_id = g.id
-        WHERE g.faculty_id = (
-            SELECT faculty_id
-            FROM groups
-            WHERE id = COALESCE(:NEW.group_id, :OLD.group_id)
+    BEFORE EACH ROW IS
+    BEGIN
+        v_group_id := :NEW.group_id;
+    END BEFORE EACH ROW;
+
+    AFTER STATEMENT IS
+    BEGIN
+        UPDATE groups
+        SET students_count = (
+            SELECT COUNT(*)
+            FROM students
+            WHERE group_id = v_group_id
         )
-    )
-    WHERE id = (
-        SELECT faculty_id
-        FROM groups
-        WHERE id = COALESCE(:NEW.group_id, :OLD.group_id)
-    );
-END;
+        WHERE id = v_group_id;
+    END AFTER STATEMENT;
+
+END trg_update_group_students_count;
 /
 
-CREATE OR REPLACE TRIGGER trg_update_faculty_groups_count
-AFTER INSERT OR UPDATE OR DELETE ON groups
-FOR EACH ROW
-BEGIN
-    UPDATE faculties
-    SET groups_count = (
-        SELECT COUNT(*)
-        FROM groups
-        WHERE faculty_id = COALESCE(:NEW.faculty_id, :OLD.faculty_id)
-    )
-    WHERE id = COALESCE(:NEW.faculty_id, :OLD.faculty_id);
-END;
+CREATE OR REPLACE TRIGGER trg_update_specialty_groups_count
+FOR INSERT OR UPDATE OR DELETE ON groups
+COMPOUND TRIGGER
+    v_specialty_id NUMBER;
+
+    BEFORE EACH ROW IS
+    BEGIN
+        v_specialty_id := :NEW.specialty_id;
+    END BEFORE EACH ROW;
+
+    AFTER STATEMENT IS
+    BEGIN
+        UPDATE specialties
+        SET groups_count = (
+            SELECT COUNT(*)
+            FROM groups
+            WHERE specialty_id = v_specialty_id
+        )
+        WHERE id = v_specialty_id;
+    END AFTER STATEMENT;
+
+END trg_update_specialty_groups_count;
 /
+
+CREATE OR REPLACE TRIGGER trg_update_faculty_specialties_count
+FOR INSERT OR UPDATE OR DELETE ON specialties
+COMPOUND TRIGGER
+    v_faculty_id NUMBER;
+
+    BEFORE EACH ROW IS
+    BEGIN
+        v_faculty_id := :NEW.faculty_id;
+    END BEFORE EACH ROW;
+
+    AFTER STATEMENT IS
+    BEGIN
+        UPDATE faculties
+        SET specialties_count = (
+            SELECT COUNT(*)
+            FROM specialties
+            WHERE faculty_id = v_faculty_id
+        )
+        WHERE id = v_faculty_id;
+    END AFTER STATEMENT;
+
+END trg_update_faculty_specialties_count;
+/
+
+DROP TRIGGER trg_update_group_students_count;
+DROP TRIGGER trg_update_specialty_groups_count;
+DROP TRIGGER trg_update_faculty_specialties_count;
