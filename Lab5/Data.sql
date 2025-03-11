@@ -103,3 +103,20 @@ INSERT INTO students (first_name, last_name, group_id) VALUES ('Валентин
 INSERT INTO students (first_name, last_name, group_id) VALUES ('Константин', 'Макаров', 26);
 INSERT INTO students (first_name, last_name, group_id) VALUES ('Евгений', 'Николаев', 27);
 INSERT INTO students (first_name, last_name, group_id) VALUES ('Анастасия', 'Захарова', 28);
+
+
+SELECT * FROM FACULTIES_LOG;
+SELECT * FROM SPECIALTIES_LOG;
+SELECT * FROM GROUPS_LOG;
+SELECT * FROM STUDENTS_LOG;
+
+
+SELECT * FROM TRIGGERS_STATE;
+
+INSERT INTO triggers_state (trigger_name, is_enabled) VALUES ('faculties_audit_trigger', 1);
+INSERT INTO triggers_state (trigger_name, is_enabled) VALUES ('specialties_audit_trigger', 1);
+INSERT INTO triggers_state (trigger_name, is_enabled) VALUES ('groups_audit_trigger', 1);
+INSERT INTO triggers_state (trigger_name, is_enabled) VALUES ('students_audit_trigger', 1);
+INSERT INTO triggers_state (trigger_name, is_enabled) VALUES ('trg_update_group_students_count', 1);
+INSERT INTO triggers_state (trigger_name, is_enabled) VALUES ('trg_update_specialty_groups_count', 1);
+INSERT INTO triggers_state (trigger_name, is_enabled) VALUES ('trg_update_faculty_specialties_count', 1);
