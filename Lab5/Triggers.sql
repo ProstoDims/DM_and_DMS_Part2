@@ -124,7 +124,17 @@ DROP TRIGGER trg_update_faculty_specialties_count;
 CREATE OR REPLACE TRIGGER faculties_audit_trigger
 AFTER INSERT OR UPDATE OR DELETE ON faculties
 FOR EACH ROW
+DECLARE
+    v_trigger_enabled NUMBER;
 BEGIN
+    SELECT is_enabled INTO v_trigger_enabled
+    FROM triggers_state
+    WHERE trigger_name = 'faculties_audit_trigger';
+
+    IF v_trigger_enabled = 0 THEN
+        RETURN;
+    END IF;
+
     IF INSERTING THEN
         INSERT INTO faculties_log (action_type, faculty_id, new_name, new_abbreviation, new_specialties_count)
         VALUES ('INSERT', :NEW.id, :NEW.name, :NEW.abbreviation, :NEW.specialties_count);
@@ -142,7 +152,17 @@ END;
 CREATE OR REPLACE TRIGGER specialties_audit_trigger
 AFTER INSERT OR UPDATE OR DELETE ON specialties
 FOR EACH ROW
+DECLARE
+    v_trigger_enabled NUMBER;
 BEGIN
+    SELECT is_enabled INTO v_trigger_enabled
+    FROM triggers_state
+    WHERE trigger_name = 'specialties_audit_trigger';
+
+    IF v_trigger_enabled = 0 THEN
+        RETURN;
+    END IF;
+
     IF INSERTING THEN
         INSERT INTO specialties_log (action_type, specialty_id, new_name, new_abbreviation, new_faculty_id, new_groups_count)
         VALUES ('INSERT', :NEW.id, :NEW.name, :NEW.abbreviation, :NEW.faculty_id, :NEW.groups_count);
@@ -159,7 +179,17 @@ END;
 CREATE OR REPLACE TRIGGER groups_audit_trigger
 AFTER INSERT OR UPDATE OR DELETE ON groups
 FOR EACH ROW
+DECLARE
+    v_trigger_enabled NUMBER;
 BEGIN
+    SELECT is_enabled INTO v_trigger_enabled
+    FROM triggers_state
+    WHERE trigger_name = 'groups_audit_trigger';
+
+    IF v_trigger_enabled = 0 THEN
+        RETURN;
+    END IF;
+
     IF INSERTING THEN
         INSERT INTO groups_log (action_type, group_id, new_name, new_specialty_id, new_students_count)
         VALUES ('INSERT', :NEW.id, :NEW.name, :NEW.specialty_id, :NEW.students_count);
@@ -176,7 +206,17 @@ END;
 CREATE OR REPLACE TRIGGER students_audit_trigger
 AFTER INSERT OR UPDATE OR DELETE ON students
 FOR EACH ROW
+DECLARE
+    v_trigger_enabled NUMBER;
 BEGIN
+    SELECT is_enabled INTO v_trigger_enabled
+    FROM triggers_state
+    WHERE trigger_name = 'students_audit_trigger';
+
+    IF v_trigger_enabled = 0 THEN
+        RETURN;
+    END IF;
+
     IF INSERTING THEN
         INSERT INTO students_log (action_type, student_id, new_first_name, new_last_name, new_group_id)
         VALUES ('INSERT', :NEW.id, :NEW.first_name, :NEW.last_name, :NEW.group_id);

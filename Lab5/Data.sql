@@ -120,3 +120,9 @@ INSERT INTO triggers_state (trigger_name, is_enabled) VALUES ('students_audit_tr
 INSERT INTO triggers_state (trigger_name, is_enabled) VALUES ('trg_update_group_students_count', 1);
 INSERT INTO triggers_state (trigger_name, is_enabled) VALUES ('trg_update_specialty_groups_count', 1);
 INSERT INTO triggers_state (trigger_name, is_enabled) VALUES ('trg_update_faculty_specialties_count', 1);
+
+
+BEGIN
+    rollback_pkg.rollback_changes(TO_TIMESTAMP('11/03/25 4:46:39', 'DD/MM/YY HH24:MI:SS'));
+END;
+/
