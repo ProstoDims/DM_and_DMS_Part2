@@ -1,3 +1,9 @@
 docker run -d --name oracle-xe -p 1521:1521 -p 5500:5500 -e ORACLE_PWD=MyStrongPass container-registry.oracle.com/database/express:21.3.0-xe
 
 sql system/MyStrongPass@localhost:1521/XEPDB1
+
+
+docker run -d --name oracle-xe -p 1521:1521 -p 5500:5500 -e ORACLE_PWD=MyStrongPass -v ~/DM_and_DMS/Lab5/reports:/opt/oracle/reports container-registry.oracle.com/database/express:21.3.0-xe
+
+sudo chown dima:dima ~/DM_and_DMS/Lab5/reports/report.html
+sudo chmod a+r ~/DM_and_DMS/Lab5/reports/report.html

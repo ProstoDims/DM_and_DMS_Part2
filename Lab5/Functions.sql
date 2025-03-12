@@ -9,7 +9,6 @@ CREATE OR REPLACE PACKAGE BODY rollback_pkg AS
     PROCEDURE perform_rollback(p_timestamp TIMESTAMP) IS
     BEGIN
         UPDATE triggers_state SET is_enabled = 0;
-        DBMS_OUTPUT.PUT_LINE(p_timestamp);
         FOR rec IN (
             SELECT * FROM students_log
             WHERE timestamp > p_timestamp
@@ -110,4 +109,69 @@ CREATE OR REPLACE PACKAGE BODY rollback_pkg AS
         perform_rollback(v_timestamp);
     END rollback_changes;
 END rollback_pkg;
+/
+
+
+CREATE OR REPLACE PROCEDURE generate_report(p_start_time TIMESTAMP DEFAULT NULL) IS
+    v_start_time TIMESTAMP;
+    v_html CLOB;
+    v_file UTL_FILE.FILE_TYPE;
+BEGIN
+    IF p_start_time IS NULL THEN
+        SELECT NVL(MAX(last_time), TO_TIMESTAMP('1970-01-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS'))
+        INTO v_start_time
+        FROM last_report_time;
+    ELSE
+        v_start_time := p_start_time;
+    END IF;
+
+    v_html := '<html>' || CHR(10) ||
+              '<head><title>Отчет об изменениях</title></head>' || CHR(10) ||
+              '<body><h1>Отчет об изменениях</h1>' || CHR(10) ||
+              '<p>Отчет с ' || TO_CHAR(v_start_time, 'YYYY-MM-DD HH24:MI:SS') ||
+              ' по ' || TO_CHAR(SYSTIMESTAMP, 'YYYY-MM-DD HH24:MI:SS') || '</p>' || CHR(10) ||
+              '<table border="1"><tr><th>Таблица</th><th>INSERT</th><th>UPDATE</th><th>DELETE</th></tr>';
+
+    FOR rec IN (
+        SELECT 'faculties_log' AS table_name, 
+               SUM(CASE WHEN action_type = 'INSERT' THEN 1 ELSE 0 END) AS insert_count,
+               SUM(CASE WHEN action_type = 'UPDATE' THEN 1 ELSE 0 END) AS update_count,
+               SUM(CASE WHEN action_type = 'DELETE' THEN 1 ELSE 0 END) AS delete_count
+        FROM faculties_log
+        WHERE timestamp > v_start_time
+        UNION ALL
+        SELECT 'specialties_log' AS table_name, 
+               SUM(CASE WHEN action_type = 'INSERT' THEN 1 ELSE 0 END) AS insert_count,
+               SUM(CASE WHEN action_type = 'UPDATE' THEN 1 ELSE 0 END) AS update_count,
+               SUM(CASE WHEN action_type = 'DELETE' THEN 1 ELSE 0 END) AS delete_count
+        FROM specialties_log
+        WHERE timestamp > v_start_time
+        UNION ALL
+        SELECT 'groups_log' AS table_name, 
+               SUM(CASE WHEN action_type = 'INSERT' THEN 1 ELSE 0 END) AS insert_count,
+               SUM(CASE WHEN action_type = 'UPDATE' THEN 1 ELSE 0 END) AS update_count,
+               SUM(CASE WHEN action_type = 'DELETE' THEN 1 ELSE 0 END) AS delete_count
+        FROM groups_log
+        WHERE timestamp > v_start_time
+        UNION ALL
+        SELECT 'students_log' AS table_name, 
+               SUM(CASE WHEN action_type = 'INSERT' THEN 1 ELSE 0 END) AS insert_count,
+               SUM(CASE WHEN action_type = 'UPDATE' THEN 1 ELSE 0 END) AS update_count,
+               SUM(CASE WHEN action_type = 'DELETE' THEN 1 ELSE 0 END) AS delete_count
+        FROM students_log
+        WHERE timestamp > v_start_time
+    ) LOOP
+        v_html := v_html || '<tr><td>' || rec.table_name || '</td><td>' ||
+                  rec.insert_count || '</td><td>' || rec.update_count || '</td><td>' ||
+                  rec.delete_count || '</td></tr>' || CHR(10);
+    END LOOP;
+
+    v_html := v_html || '</table></body></html>' || CHR(10);
+
+    v_file := UTL_FILE.FOPEN('REPORT_DIR', 'report.html', 'W');
+    UTL_FILE.PUT_LINE(v_file, v_html);
+    UTL_FILE.FCLOSE(v_file);
+
+    INSERT INTO last_report_time (last_time) VALUES (SYSTIMESTAMP);
+END;
 /

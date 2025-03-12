@@ -1,3 +1,7 @@
+CREATE OR REPLACE DIRECTORY REPORT_DIR AS '/opt/oracle/reports';
+GRANT READ, WRITE ON DIRECTORY REPORT_DIR TO PUBLIC;
+
+
 SELECT * FROM FACULTIES;
 
 INSERT INTO FACULTIES(NAME, ABBREVIATION) VALUES('Факультет компьютерных систем и сетей', 'ФКСиС');
@@ -124,5 +128,17 @@ INSERT INTO triggers_state (trigger_name, is_enabled) VALUES ('trg_update_facult
 
 BEGIN
     rollback_pkg.rollback_changes(TO_TIMESTAMP('11/03/25 4:46:39', 'DD/MM/YY HH24:MI:SS'));
+END;
+/
+
+COMMIT;
+
+BEGIN
+    generate_report;
+END;
+/
+
+BEGIN
+    generate_report(TO_TIMESTAMP('11/03/25 4:43:30', 'DD/MM/YY HH24:MI:SS'));
 END;
 /
