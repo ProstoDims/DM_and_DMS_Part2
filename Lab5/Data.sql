@@ -125,9 +125,9 @@ INSERT INTO triggers_state (trigger_name, is_enabled) VALUES ('trg_update_group_
 INSERT INTO triggers_state (trigger_name, is_enabled) VALUES ('trg_update_specialty_groups_count', 1);
 INSERT INTO triggers_state (trigger_name, is_enabled) VALUES ('trg_update_faculty_specialties_count', 1);
 
-
+SELECT * FROM LAST_REPORT_TIME;
 BEGIN
-    rollback_pkg.rollback_changes(TO_TIMESTAMP('11/03/25 4:46:39', 'DD/MM/YY HH24:MI:SS'));
+    rollback_pkg.rollback_changes(25);
 END;
 /
 
@@ -142,3 +142,7 @@ BEGIN
     generate_report(TO_TIMESTAMP('11/03/25 4:43:30', 'DD/MM/YY HH24:MI:SS'));
 END;
 /
+
+
+DELETE FROM SPECIALTIES WHERE ID = 5;
+DELETE FROM SPECIALTIES WHERE ID = 6;

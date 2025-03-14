@@ -132,6 +132,7 @@ BEGIN
               ' по ' || TO_CHAR(SYSTIMESTAMP, 'YYYY-MM-DD HH24:MI:SS') || '</p>' || CHR(10) ||
               '<table border="1"><tr><th>Таблица</th><th>INSERT</th><th>UPDATE</th><th>DELETE</th></tr>';
 
+    -- Сбор данных из логов
     FOR rec IN (
         SELECT 'faculties_log' AS table_name, 
                SUM(CASE WHEN action_type = 'INSERT' THEN 1 ELSE 0 END) AS insert_count,
@@ -172,6 +173,6 @@ BEGIN
     UTL_FILE.PUT_LINE(v_file, v_html);
     UTL_FILE.FCLOSE(v_file);
 
-    INSERT INTO last_report_time (last_time) VALUES (SYSTIMESTAMP);
+    INSERT INTO last_report_time (last_time) VALUES (CURRENT_TIMESTAMP );
 END;
 /
